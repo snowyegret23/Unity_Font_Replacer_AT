@@ -56,9 +56,14 @@
 
   <Target Name="CopyPublishSupportFiles" AfterTargets="Publish">
     <ItemGroup>
+      <ReleaseSupportFiles Include="$(MSBuildProjectDirectory)\..\CharList_3911.txt" />
       <KrAssetsFiles Include="$(MSBuildProjectDirectory)\..\KR_ASSETS\**\*" />
       <Il2CppDumperFiles Include="$(MSBuildProjectDirectory)\..\Il2CppDumper\**\*" />
     </ItemGroup>
+
+    <Copy SourceFiles="@(ReleaseSupportFiles)"
+          DestinationFiles="@(ReleaseSupportFiles->'$(PublishDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
 
     <Copy SourceFiles="@(KrAssetsFiles)"
           DestinationFiles="@(KrAssetsFiles->'$(PublishDir)KR_ASSETS\%(RecursiveDir)%(Filename)%(Extension)')"
@@ -79,6 +84,7 @@
     <MakeDir Directories="$(KoStageDir);$(EnStageDir);$(VariantPublishDir)" />
 
     <ItemGroup>
+      <ReleaseSupportFiles Include="$(MSBuildProjectDirectory)\..\CharList_3911.txt" />
       <KrAssetsFiles Include="$(MSBuildProjectDirectory)\..\KR_ASSETS\**\*" />
       <Il2CppDumperFiles Include="$(MSBuildProjectDirectory)\..\Il2CppDumper\**\*" />
     </ItemGroup>
@@ -98,6 +104,10 @@
 
     <Copy SourceFiles="$(EnStageDir)UnityFontReplacer.exe"
           DestinationFiles="$(VariantPublishDir)UnityFontReplacer_EN.exe" />
+
+    <Copy SourceFiles="@(ReleaseSupportFiles)"
+          DestinationFiles="@(ReleaseSupportFiles->'$(VariantPublishDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
 
     <Copy SourceFiles="@(KrAssetsFiles)"
           DestinationFiles="@(KrAssetsFiles->'$(VariantPublishDir)KR_ASSETS\%(RecursiveDir)%(Filename)%(Extension)')"

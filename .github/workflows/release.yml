@@ -56,6 +56,8 @@ jobs:
 
           Copy-Item (Join-Path $publishDir 'UnityFontReplacer_KO.exe') $koDir
           Copy-Item (Join-Path $publishDir 'UnityFontReplacer_EN.exe') $enDir
+          Copy-Item (Join-Path $publishDir 'CharList_3911.txt') $koDir
+          Copy-Item (Join-Path $publishDir 'CharList_3911.txt') $enDir
           Copy-Item -Recurse (Join-Path $publishDir 'KR_ASSETS') $koDir
           Copy-Item -Recurse (Join-Path $publishDir 'KR_ASSETS') $enDir
           Copy-Item -Recurse (Join-Path $publishDir 'Il2CppDumper') $koDir

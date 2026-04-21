@@ -26,12 +26,14 @@ Unity 게임의 TTF 폰트와 TextMeshPro(TMP) SDF 폰트를 스캔, 교체, 추
 ```text
 release/
 ├── UnityFontReplacer_KO.exe
+├── CharList_3911.txt
 ├── KR_ASSETS/
 ├── Il2CppDumper/
 └── README.md
 
 release_en/
 ├── UnityFontReplacer_EN.exe
+├── CharList_3911.txt
 ├── KR_ASSETS/
 ├── Il2CppDumper/
 └── README_EN.md
@@ -39,6 +41,7 @@ release_en/
 
 - `UnityFontReplacer_KO.exe`: 한국어 UI
 - `UnityFontReplacer_EN.exe`: 영어 UI
+- `CharList_3911.txt`: 기본 문자셋 목록
 - `KR_ASSETS/`: 내장 교체 폰트 및 SDF 리소스
 - `Il2CppDumper/`: Il2Cpp 게임용 더미 `Managed` 생성 도구
 
@@ -225,6 +228,7 @@ dotnet msbuild .\Unity_Font_Replacer_AT\UnityFontReplacer.csproj /t:PublishLocal
 
 - `publish\UnityFontReplacer_KO.exe`
 - `publish\UnityFontReplacer_EN.exe`
+- `publish\CharList_3911.txt`
 - `publish\KR_ASSETS\`
 - `publish\Il2CppDumper\`
 

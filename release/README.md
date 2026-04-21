@@ -7,6 +7,7 @@
 ```text
 release/
 ├── UnityFontReplacer_KO.exe
+├── CharList_3911.txt
 ├── KR_ASSETS/
 ├── Il2CppDumper/
 └── README.md
@@ -40,6 +41,7 @@ UnityFontReplacer_KO.exe makesdf --ttf ".\MyFont.ttf"
 ## 참고
 
 - `classdata.tpk`는 포함되지 않습니다. 첫 실행 시 자동 다운로드됩니다.
+- `CharList_3911.txt`는 기본 문자셋 목록 파일입니다.
 - `KR_ASSETS/`에는 `Mulmaru`, `NanumGothic` 내장 리소스가 들어 있습니다.
 - `Il2CppDumper/`는 Il2Cpp 게임에서 `Managed` 폴더가 없을 때 더미 DLL을 자동 생성하는 데 사용됩니다.
 - 전체 문서는 저장소 루트의 `README.md`를 참고하세요.

@@ -25,12 +25,14 @@ Release ZIPs typically look like this:
 ```text
 release/
 ├── UnityFontReplacer_KO.exe
+├── CharList_3911.txt
 ├── KR_ASSETS/
 ├── Il2CppDumper/
 └── README.md
 
 release_en/
 ├── UnityFontReplacer_EN.exe
+├── CharList_3911.txt
 ├── KR_ASSETS/
 ├── Il2CppDumper/
 └── README_EN.md
@@ -38,6 +40,7 @@ release_en/
 
 - `UnityFontReplacer_KO.exe`: Korean UI
 - `UnityFontReplacer_EN.exe`: English UI
+- `CharList_3911.txt`: default charset list
 - `KR_ASSETS/`: bundled replacement fonts and SDF resources
 - `Il2CppDumper/`: helper for generating dummy `Managed` DLLs on Il2Cpp games
 
@@ -224,6 +227,7 @@ Generated files:
 
 - `publish\UnityFontReplacer_KO.exe`
 - `publish\UnityFontReplacer_EN.exe`
+- `publish\CharList_3911.txt`
 - `publish\KR_ASSETS\`
 - `publish\Il2CppDumper\`
 

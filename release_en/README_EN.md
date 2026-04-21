@@ -7,6 +7,7 @@ This folder is the English UI release package.
 ```text
 release_en/
 ├── UnityFontReplacer_EN.exe
+├── CharList_3911.txt
 ├── KR_ASSETS/
 ├── Il2CppDumper/
 └── README_EN.md
@@ -40,6 +41,7 @@ UnityFontReplacer_EN.exe makesdf --ttf ".\MyFont.ttf"
 ## Notes
 
 - `classdata.tpk` is not included. It is downloaded automatically on first run.
+- `CharList_3911.txt` is the default charset list file.
 - `KR_ASSETS/` contains the built-in `Mulmaru` and `NanumGothic` resources.
 - `Il2CppDumper/` is used to auto-generate dummy DLLs for Il2Cpp games when `Managed` is missing.
 - See the repository root `README_EN.md` for the full guide.
