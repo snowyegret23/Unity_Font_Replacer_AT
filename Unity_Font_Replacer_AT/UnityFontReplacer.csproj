@@ -62,11 +62,6 @@
     <Copy SourceFiles="@(KrAssetsFiles)"
           DestinationFiles="@(KrAssetsFiles->'$(PublishDir)KR_ASSETS\%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
-
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\classdata.tpk"
-          DestinationFiles="$(PublishDir)classdata.tpk"
-          Condition="Exists('$(MSBuildProjectDirectory)\..\classdata.tpk')"
-          SkipUnchangedFiles="true" />
   </Target>
 
   <Target Name="PublishLocalizedVariants">
@@ -100,11 +95,6 @@
 
     <Copy SourceFiles="@(KrAssetsFiles)"
           DestinationFiles="@(KrAssetsFiles->'$(VariantPublishDir)KR_ASSETS\%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\classdata.tpk"
-          DestinationFiles="$(VariantPublishDir)classdata.tpk"
-          Condition="Exists('$(MSBuildProjectDirectory)\..\classdata.tpk')"
           SkipUnchangedFiles="true" />
   </Target>
 

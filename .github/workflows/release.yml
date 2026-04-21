@@ -1,0 +1,92 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (for example: 1.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore .\Unity_Font_Replacer_AT\UnityFontReplacer.csproj
+
+      - name: Build
+        run: dotnet build .\Unity_Font_Replacer_AT\UnityFontReplacer.csproj -c Release --no-restore
+
+      - name: Publish localized variants
+        run: |
+          $publishDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\publish\'
+          dotnet msbuild .\Unity_Font_Replacer_AT\UnityFontReplacer.csproj `
+            /t:PublishLocalizedVariants `
+            /p:Configuration=Release `
+            "/p:VariantPublishDir=$publishDir"
+
+      - name: Prepare release folders
+        run: |
+          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
+          $publishDir = Join-Path $artifactRoot 'publish'
+          $koDir = Join-Path $artifactRoot 'release_ko'
+          $enDir = Join-Path $artifactRoot 'release_en'
+
+          Remove-Item $koDir, $enDir -Recurse -Force -ErrorAction Ignore
+          New-Item -ItemType Directory -Force -Path $koDir, $enDir | Out-Null
+
+          Copy-Item (Join-Path $publishDir 'UnityFontReplacer_KO.exe') $koDir
+          Copy-Item (Join-Path $publishDir 'UnityFontReplacer_EN.exe') $enDir
+          Copy-Item -Recurse (Join-Path $publishDir 'KR_ASSETS') $koDir
+          Copy-Item -Recurse (Join-Path $publishDir 'KR_ASSETS') $enDir
+          Copy-Item .\release\README.md $koDir
+          Copy-Item .\release_en\README_EN.md $enDir
+
+      - name: Create ZIP archives
+        run: |
+          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
+          $koZip = Join-Path $artifactRoot "Unity_Font_Replacer_AT_KO_v${{ inputs.version }}.zip"
+          $enZip = Join-Path $artifactRoot "Unity_Font_Replacer_AT_EN_v${{ inputs.version }}.zip"
+
+          Remove-Item $koZip, $enZip -Force -ErrorAction Ignore
+          Compress-Archive -Path "$artifactRoot\release_ko\*" -DestinationPath $koZip
+          Compress-Archive -Path "$artifactRoot\release_en\*" -DestinationPath $enZip
+
+      - name: Create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ inputs.version }}" ${{ github.sha }}
+          git push origin "v${{ inputs.version }}"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/Unity_Font_Replacer_AT_KO_v${{ inputs.version }}.zip
+            artifacts/Unity_Font_Replacer_AT_EN_v${{ inputs.version }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

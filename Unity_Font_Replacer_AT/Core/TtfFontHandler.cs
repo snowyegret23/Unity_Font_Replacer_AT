@@ -78,10 +78,49 @@ public static class TtfFontHandler
     /// </summary>
     public static byte[] LoadTtfFile(string ttfPath)
     {
-        if (!File.Exists(ttfPath))
+        var resolvedPath = ResolveTtfPath(ttfPath);
+        if (resolvedPath == null)
             throw new FileNotFoundException($"TTF file not found: {ttfPath}");
 
-        return File.ReadAllBytes(ttfPath);
+        return File.ReadAllBytes(resolvedPath);
+    }
+
+    /// <summary>
+    /// TTF/OTF 입력값을 실제 파일 경로로 해석한다.
+    /// 직접 경로 -> 상대 경로(CWD/EXE) -> KR_ASSETS 하위 순으로 탐색한다.
+    /// </summary>
+    public static string? ResolveTtfPath(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return null;
+
+        source = source.Trim().Trim('"');
+
+        if (File.Exists(source))
+            return Path.GetFullPath(source);
+
+        if (Directory.Exists(source))
+            return FindFirstFontInDirectory(source);
+
+        var candidateNames = BuildCandidateNames(source);
+        foreach (var baseDir in EnumerateSearchRoots())
+        {
+            foreach (var candidateName in candidateNames)
+            {
+                var candidatePath = Path.Combine(baseDir, candidateName);
+                if (File.Exists(candidatePath))
+                    return Path.GetFullPath(candidatePath);
+
+                if (Directory.Exists(candidatePath))
+                {
+                    var nestedFont = FindFirstFontInDirectory(candidatePath);
+                    if (nestedFont != null)
+                        return nestedFont;
+                }
+            }
+        }
+
+        return null;
     }
 
     private static AssetTypeValueField? ResolveFontDataField(AssetTypeValueField baseField)
@@ -133,5 +172,59 @@ public static class TtfFontHandler
         fontDataField.TemplateField = byteArrayTemplate;
         fontDataField.Value = new AssetTypeValue(AssetValueType.ByteArray, newTtfData);
         fontDataField.Children = [];
+    }
+
+    private static IEnumerable<string> BuildCandidateNames(string source)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                seen.Add(value);
+        }
+
+        Add(source);
+        if (!source.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase))
+            Add(source + ".ttf");
+        if (!source.EndsWith(".otf", StringComparison.OrdinalIgnoreCase))
+            Add(source + ".otf");
+
+        var fileName = Path.GetFileName(source);
+        if (!string.Equals(fileName, source, StringComparison.Ordinal))
+        {
+            Add(fileName);
+            if (!fileName.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase))
+                Add(fileName + ".ttf");
+            if (!fileName.EndsWith(".otf", StringComparison.OrdinalIgnoreCase))
+                Add(fileName + ".otf");
+        }
+
+        return seen;
+    }
+
+    private static IEnumerable<string> EnumerateSearchRoots()
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var root in new[]
+                 {
+                     Directory.GetCurrentDirectory(),
+                     AppDomain.CurrentDomain.BaseDirectory,
+                     Path.Combine(Directory.GetCurrentDirectory(), "KR_ASSETS"),
+                     Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "KR_ASSETS"),
+                 })
+        {
+            if (Directory.Exists(root) && seen.Add(root))
+                yield return root;
+        }
+    }
+
+    private static string? FindFirstFontInDirectory(string dir)
+    {
+        return Directory
+            .EnumerateFiles(dir, "*.*", SearchOption.TopDirectoryOnly)
+            .FirstOrDefault(path =>
+                path.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith(".otf", StringComparison.OrdinalIgnoreCase));
     }
 }
