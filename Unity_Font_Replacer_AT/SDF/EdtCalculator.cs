@@ -7,7 +7,7 @@ namespace UnityFontReplacer.SDF;
 public static class EdtCalculator
 {
     /// <summary>
-    /// 2D 유클리드 거리 변환. 입력: binary mask (true=object). 출력: 각 픽셀에서 가장 가까운 object 픽셀까지의 거리.
+    /// 2D 유클리드 거리 변환. 입력: binary mask (true=seed). 출력: 각 픽셀에서 가장 가까운 seed 픽셀까지의 거리.
     /// </summary>
     public static float[,] DistanceTransform(bool[,] mask)
     {
@@ -76,9 +76,13 @@ public static class EdtCalculator
             }
         }
 
-        // 내부/외부 거리 계산
-        var distInside = DistanceTransform(inside);
-        var distOutside = DistanceTransform(outside);
+        // Python/scipy 구현과 같은 부호를 얻기 위해:
+        // - inside 픽셀은 "가장 가까운 outside" 까지의 거리가 양수
+        // - outside 픽셀은 "가장 가까운 inside" 까지의 거리가 양수
+        // 이 DistanceTransform은 nearest true(seed) 거리를 반환하므로
+        // mask를 뒤집어 사용해야 한다.
+        var distToOutside = DistanceTransform(outside);
+        var distToInside = DistanceTransform(inside);
 
         float spreadF = Math.Max(1f, spread);
         var result = new byte[h, w];
@@ -87,7 +91,7 @@ public static class EdtCalculator
         {
             for (int x = 0; x < w; x++)
             {
-                float signedDist = distInside[y, x] - distOutside[y, x];
+                float signedDist = distToOutside[y, x] - distToInside[y, x];
                 float normalized = 0.5f + signedDist / (2f * spreadF);
                 normalized = Math.Clamp(normalized, 0f, 1f);
                 result[y, x] = (byte)(normalized * 255f);

@@ -47,7 +47,7 @@ public static class CommandBuilder
         var atlasSizeOption = new Option<string>("--atlas-size", () => "4096,4096", "Atlas size (W,H)");
         var pointSizeOption = new Option<int>("--point-size", () => 0, "Point size (0=auto)");
         var paddingOption = new Option<int>("--padding", () => 7, "Atlas padding");
-        var charsetOption = new Option<string>("--charset", () => "", "Charset file or literal");
+        var charsetOption = new Option<string>("--charset", () => MakeSdfCommand.DefaultCharsetArgument, "Charset file or literal");
         var renderModeOption = new Option<string>("--rendermode", () => "sdf", "sdf or raster");
         makeSdfCommand.AddOption(ttfOption);
         makeSdfCommand.AddOption(atlasSizeOption);

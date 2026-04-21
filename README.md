@@ -197,7 +197,7 @@ UnityFontReplacer_KO.exe makesdf --ttf ".\Mulmaru.ttf" --rendermode raster
 | `--atlas-size` | atlas 크기 (`W,H`) | `4096,4096` |
 | `--point-size` | point size (`0`이면 자동) | `0` |
 | `--padding` | atlas padding | `7` |
-| `--charset` | charset 파일 또는 문자열 | 빈 값 |
+| `--charset` | charset 파일 또는 문자열 | `./CharList_3911.txt` |
 | `--rendermode` | `sdf` 또는 `raster` | `sdf` |
 
 ## 커스텀 폰트 추가

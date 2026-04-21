@@ -196,7 +196,7 @@ UnityFontReplacer_EN.exe makesdf --ttf ".\Mulmaru.ttf" --rendermode raster
 | `--atlas-size` | atlas size (`W,H`) | `4096,4096` |
 | `--point-size` | point size (`0` = auto) | `0` |
 | `--padding` | atlas padding | `7` |
-| `--charset` | charset file or literal string | empty |
+| `--charset` | charset file or literal string | `./CharList_3911.txt` |
 | `--rendermode` | `sdf` or `raster` | `sdf` |
 
 ## Adding custom fonts

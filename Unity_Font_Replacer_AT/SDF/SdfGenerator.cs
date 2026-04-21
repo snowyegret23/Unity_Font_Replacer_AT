@@ -91,7 +91,7 @@ public static class SdfGenerator
                     for (int x = 0; x < destW && (placement.X + x) < atlasWidth; x++)
                     {
                         byte val = processed[y, x];
-                        row[placement.X + x] = new Rgba32(255, 255, 255, val);
+                        row[placement.X + x] = new Rgba32(0, 0, 0, val);
                     }
                 }
             });

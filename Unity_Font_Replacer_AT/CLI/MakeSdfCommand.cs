@@ -5,6 +5,8 @@ namespace UnityFontReplacer.CLI;
 
 public static class MakeSdfCommand
 {
+    public const string DefaultCharsetArgument = "./CharList_3911.txt";
+
     public static async Task ExecuteAsync(
         string ttf, string atlasSize, int pointSize,
         int padding, string charset, string renderMode)
@@ -26,11 +28,21 @@ public static class MakeSdfCommand
         var (aw, ah) = ParseAtlasSize(atlasSize);
 
         // 캐릭터셋 로드
-        var unicodes = LoadCharset(charset);
+        int[] unicodes;
+        try
+        {
+            unicodes = LoadCharset(charset);
+        }
+        catch (FileNotFoundException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
+            return;
+        }
+
         if (unicodes.Length == 0)
         {
-            AnsiConsole.MarkupLine("[yellow]No characters to process. Using default ASCII range.[/]");
-            unicodes = Enumerable.Range(32, 95).ToArray(); // ASCII 32-126
+            AnsiConsole.MarkupLine("[red]Charset is empty.[/]");
+            return;
         }
 
         bool rasterMode = renderMode.Equals("raster", StringComparison.OrdinalIgnoreCase);
@@ -85,26 +97,67 @@ public static class MakeSdfCommand
 
     private static int[] LoadCharset(string charset)
     {
-        if (string.IsNullOrWhiteSpace(charset))
-            return [];
+        var raw = string.IsNullOrWhiteSpace(charset)
+            ? DefaultCharsetArgument
+            : charset.Trim();
 
-        // 파일인지 확인
-        if (File.Exists(charset))
+        foreach (var candidate in EnumerateCharsetCandidates(raw))
         {
-            var text = File.ReadAllText(charset);
+            if (!File.Exists(candidate))
+                continue;
+
+            var text = File.ReadAllText(candidate);
             return TextToUnicodes(text);
         }
 
-        // CWD에서 찾기
-        var inCwd = Path.Combine(Directory.GetCurrentDirectory(), charset);
-        if (File.Exists(inCwd))
+        bool looksLikePath =
+            raw.Contains(Path.DirectorySeparatorChar) ||
+            raw.Contains(Path.AltDirectorySeparatorChar) ||
+            raw.EndsWith(".txt", StringComparison.OrdinalIgnoreCase);
+
+        if (looksLikePath)
+            throw new FileNotFoundException($"Charset file not found: {raw}");
+
+        return TextToUnicodes(raw);
+    }
+
+    private static IEnumerable<string> EnumerateCharsetCandidates(string raw)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        static IEnumerable<string> Expand(string root, string value)
         {
-            var text = File.ReadAllText(inCwd);
-            return TextToUnicodes(text);
+            yield return Path.Combine(root, value);
+
+            var fileName = Path.GetFileName(value);
+            if (!string.IsNullOrWhiteSpace(fileName) &&
+                !fileName.Equals(value, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return Path.Combine(root, fileName);
+            }
         }
 
-        // 리터럴 문자열로 취급
-        return TextToUnicodes(charset);
+        if (Path.IsPathRooted(raw))
+        {
+            if (seen.Add(raw))
+                yield return raw;
+            yield break;
+        }
+
+        if (seen.Add(raw))
+            yield return raw;
+
+        foreach (var candidate in Expand(Directory.GetCurrentDirectory(), raw))
+        {
+            if (seen.Add(candidate))
+                yield return candidate;
+        }
+
+        foreach (var candidate in Expand(AppDomain.CurrentDomain.BaseDirectory, raw))
+        {
+            if (seen.Add(candidate))
+                yield return candidate;
+        }
     }
 
     private static int[] TextToUnicodes(string text)
@@ -122,6 +175,11 @@ public static class MakeSdfCommand
             {
                 cp = text[i];
             }
+
+            // Python 원본은 텍스트 파일을 universal-newline 모드로 읽으므로
+            // CR(\r)은 문자셋에 포함되지 않는다.
+            if (cp == '\r')
+                continue;
 
             // NUL과 서로게이트 제외
             if (cp > 0 && (cp < 0xD800 || cp > 0xDFFF))
