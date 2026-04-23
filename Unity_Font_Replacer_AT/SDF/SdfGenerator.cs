@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -62,7 +63,7 @@ public static class SdfGenerator
             .ToList();
 
         // 3. 아틀라스 이미지 생성 + 글리프 렌더링/SDF 변환
-        var atlas = new Image<Rgba32>(atlasWidth, atlasHeight);
+        var atlasPixels = new Rgba32[atlasWidth * atlasHeight];
         var glyphTable = new List<TmpGlyphNew>();
         var characterTable = new List<TmpCharacterNew>();
 
@@ -73,7 +74,6 @@ public static class SdfGenerator
             if (!placementMap.TryGetValue(unicode, out var placement))
                 continue;
 
-            // SDF 또는 래스터 변환
             byte[,] processed;
             if (rasterMode)
             {
@@ -88,7 +88,6 @@ public static class SdfGenerator
                 }
                 else
                 {
-                    // FreeType SDF renderer를 사용할 수 없으면 기존 alpha-aware 경로로 fallback.
                     var bitmap = renderer.RenderGlyphBitmap(unicode, resolvedSize, padding, out _, out _);
                     processed = EdtCalculator.ComputeSdf(bitmap, padding);
                 }
@@ -96,29 +95,29 @@ public static class SdfGenerator
 
             int bmpH = processed.GetLength(0);
             int bmpW = processed.GetLength(1);
-
-            // 아틀라스에 복사 (alpha 채널)
             int destW = Math.Min(bmpW, placement.Width);
             int destH = Math.Min(bmpH, placement.Height);
 
-            atlas.ProcessPixelRows(accessor =>
+            for (int y = 0; y < destH; y++)
             {
-                for (int y = 0; y < destH && (placement.Y + y) < atlasHeight; y++)
-                {
-                    var row = accessor.GetRowSpan(placement.Y + y);
-                    for (int x = 0; x < destW && (placement.X + x) < atlasWidth; x++)
-                    {
-                        byte val = processed[y, x];
-                        row[placement.X + x] = new Rgba32(0, 0, 0, val);
-                    }
-                }
-            });
+                int atlasRow = placement.Y + y;
+                if (atlasRow >= atlasHeight)
+                    break;
 
-            // 글리프 메트릭(패딩 제외한 실제 글리프 영역)
+                int rowOffset = atlasRow * atlasWidth;
+                for (int x = 0; x < destW; x++)
+                {
+                    int atlasX = placement.X + x;
+                    if (atlasX >= atlasWidth)
+                        break;
+
+                    atlasPixels[rowOffset + atlasX] = new Rgba32(0, 0, 0, processed[y, x]);
+                }
+            }
+
             int glyphW = Math.Max(0, metrics.Width);
             int glyphH = Math.Max(0, metrics.Height);
             int glyphX = rasterMode ? placement.X + padding : placement.X;
-            // TMP: bottom-origin Y
             int glyphY = rasterMode
                 ? atlasHeight - (placement.Y + padding) - glyphH
                 : atlasHeight - placement.Y - glyphH;
@@ -189,6 +188,10 @@ public static class SdfGenerator
             ["_TextureHeight"] = atlasHeight,
         };
 
+        var atlas = Image.LoadPixelData<Rgba32>(
+            MemoryMarshal.AsBytes(atlasPixels.AsSpan()),
+            atlasWidth,
+            atlasHeight);
         return new SdfResult(fontAsset, atlas, materialProps, filterMode);
     }
 
