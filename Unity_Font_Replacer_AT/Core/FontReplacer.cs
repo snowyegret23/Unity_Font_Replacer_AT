@@ -842,7 +842,9 @@ public class FontReplacer
             return null;
         }
 
-        AnsiConsole.MarkupLine($"[cyan]Generating SDF from TTF: {Markup.Escape(Path.GetFileName(ttfPath))} (padding {padding})[/]");
+        var displayMode = preferRaster ? "Raster" : "SDF";
+        var filterMode = preferRaster ? TextureFilterMode.Point : TextureFilterMode.Bilinear;
+        AnsiConsole.MarkupLine($"[cyan]Generating {displayMode} from TTF: {Markup.Escape(Path.GetFileName(ttfPath))} (padding {padding})[/]");
         var result = SdfGenerator.Generate(
             ttfData,
             unicodes,
@@ -851,7 +853,7 @@ public class FontReplacer
             padding: padding,
             pointSize: 0,
             rasterMode: preferRaster,
-            filterMode: TextureFilterMode.Bilinear);
+            filterMode: filterMode);
 
         try
         {

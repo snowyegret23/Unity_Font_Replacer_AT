@@ -10,7 +10,7 @@ public static class OneShotCommand
 {
     private const int DefaultPadding = 7;
     private const string DefaultAtlasSize = "4096,4096";
-    private const string DefaultFilterMode = "bilinear";
+    private const string DefaultFilterMode = "auto";
 
     public static Command Build()
     {
@@ -26,12 +26,12 @@ public static class OneShotCommand
         var outputOption = CommandLineOptions.OptionalOption<string?>("--output-only", "Write modified files to this directory instead of in-place");
         var sdfOnlyOption = CommandLineOptions.OptionalOption<bool>("--sdfonly", "Replace SDF fonts only");
         var ttfOnlyOption = CommandLineOptions.OptionalOption<bool>("--ttfonly", "Replace TTF fonts only");
-        var rasterOption = CommandLineOptions.OptionalOption<bool>("--raster", "Generate raster atlases for SDF replacements");
+        var forceRasterOption = CommandLineOptions.OptionalOption<bool>("--force-raster", "Generate raster atlases for SDF replacements", "--raster");
         var sdfOption = CommandLineOptions.OptionalOption<bool>("--sdf", "Generate SDF atlases for SDF replacements");
         var atlasSizeOption = CommandLineOptions.OptionalOption("--atlas-size", DefaultAtlasSize, "Atlas size (W,H)");
         var pointSizeOption = CommandLineOptions.OptionalOption("--point-size", 0, "Point size (0=auto)");
         var charsetOption = CommandLineOptions.OptionalOption("--charset", MakeSdfCommand.DefaultCharsetArgument, "Charset file or literal");
-        var filterModeOption = CommandLineOptions.OptionalOption("--filter-mode", DefaultFilterMode, "point / bilinear / trilinear");
+        var filterModeOption = CommandLineOptions.OptionalOption("--filter-mode", DefaultFilterMode, "auto / point / bilinear / trilinear");
 
         oneShotCommand.Add(gamePathOption);
         oneShotCommand.Add(fontOption);
@@ -39,7 +39,7 @@ public static class OneShotCommand
         oneShotCommand.Add(outputOption);
         oneShotCommand.Add(sdfOnlyOption);
         oneShotCommand.Add(ttfOnlyOption);
-        oneShotCommand.Add(rasterOption);
+        oneShotCommand.Add(forceRasterOption);
         oneShotCommand.Add(sdfOption);
         oneShotCommand.Add(atlasSizeOption);
         oneShotCommand.Add(pointSizeOption);
@@ -55,7 +55,7 @@ public static class OneShotCommand
                 parseResult.GetValue(outputOption),
                 parseResult.GetValue(sdfOnlyOption),
                 parseResult.GetValue(ttfOnlyOption),
-                parseResult.GetValue(rasterOption),
+                parseResult.GetValue(forceRasterOption),
                 parseResult.GetValue(sdfOption),
                 parseResult.GetValue(atlasSizeOption) ?? DefaultAtlasSize,
                 parseResult.GetValue(pointSizeOption),
@@ -73,7 +73,7 @@ public static class OneShotCommand
         string? outputDir,
         bool sdfOnly,
         bool ttfOnly,
-        bool raster,
+        bool forceRaster,
         bool sdf,
         string atlasSize,
         int pointSize,
@@ -82,9 +82,9 @@ public static class OneShotCommand
     {
         await Task.CompletedTask;
 
-        if (raster && sdf)
+        if (forceRaster && sdf)
         {
-            AnsiConsole.MarkupLine("[red]--raster and --sdf cannot be used together.[/]");
+            AnsiConsole.MarkupLine("[red]--force-raster/--raster and --sdf cannot be used together.[/]");
             return;
         }
 
@@ -143,14 +143,22 @@ public static class OneShotCommand
             }
         }
 
-        if (!TextureFilterModeParser.TryParse(filterMode, out var resolvedFilterMode))
+        var normalizedFilterMode = (filterMode ?? "").Trim().ToLowerInvariant();
+        TextureFilterMode resolvedFilterMode;
+        if (normalizedFilterMode is "" or "auto")
         {
-            AnsiConsole.MarkupLine($"[red]Invalid filter mode: {Markup.Escape(filterMode)} (point / bilinear / trilinear)[/]");
+            resolvedFilterMode = forceRaster
+                ? TextureFilterMode.Point
+                : TextureFilterMode.Bilinear;
+        }
+        else if (!TextureFilterModeParser.TryParse(filterMode, out resolvedFilterMode))
+        {
+            AnsiConsole.MarkupLine($"[red]Invalid filter mode: {Markup.Escape(filterMode ?? "")} (auto / point / bilinear / trilinear)[/]");
             return;
         }
 
         var (atlasWidth, atlasHeight) = MakeSdfCommand.ParseAtlasSize(atlasSize);
-        bool rasterMode = raster;
+        bool rasterMode = forceRaster;
         var displayMode = rasterMode ? "Raster" : "SDF";
 
         using var ctx = new AssetsContext(resolved.DataPath, resolved.ManagedPath);

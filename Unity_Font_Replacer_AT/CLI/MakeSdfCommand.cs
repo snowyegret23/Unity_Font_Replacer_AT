@@ -55,9 +55,17 @@ public static class MakeSdfCommand
             return;
         }
 
-        if (!TextureFilterModeParser.TryParse(filterMode, out var resolvedFilterMode))
+        var normalizedFilterMode = (filterMode ?? "").Trim().ToLowerInvariant();
+        TextureFilterMode resolvedFilterMode;
+        if (normalizedFilterMode is "" or "auto")
         {
-            AnsiConsole.MarkupLine($"[red]Invalid filter mode: {Markup.Escape(filterMode)} (point / bilinear / trilinear)[/]");
+            resolvedFilterMode = rasterMode
+                ? TextureFilterMode.Point
+                : TextureFilterMode.Bilinear;
+        }
+        else if (!TextureFilterModeParser.TryParse(filterMode, out resolvedFilterMode))
+        {
+            AnsiConsole.MarkupLine($"[red]Invalid filter mode: {Markup.Escape(filterMode ?? "")} (auto / point / bilinear / trilinear)[/]");
             return;
         }
 

@@ -34,6 +34,7 @@ public static class BatchCommand
         var outputOption = CommandLineOptions.OptionalOption<string?>("--output-only", "Write modified files to this directory instead of in-place");
         var sdfOnlyOption = CommandLineOptions.OptionalOption<bool>("--sdfonly", "Replace SDF fonts only");
         var ttfOnlyOption = CommandLineOptions.OptionalOption<bool>("--ttfonly", "Replace TTF fonts only");
+        var forceRasterOption = CommandLineOptions.OptionalOption<bool>("--force-raster", "Force raster behavior for SDF replacements", "--raster");
 
         batchCommand.Add(gamePathOption);
         batchCommand.Add(fontOption);
@@ -41,6 +42,7 @@ public static class BatchCommand
         batchCommand.Add(outputOption);
         batchCommand.Add(sdfOnlyOption);
         batchCommand.Add(ttfOnlyOption);
+        batchCommand.Add(forceRasterOption);
 
         batchCommand.SetAction(async parseResult =>
         {
@@ -50,7 +52,8 @@ public static class BatchCommand
                 parseResult.GetValue(ps5Option),
                 parseResult.GetValue(outputOption),
                 parseResult.GetValue(sdfOnlyOption),
-                parseResult.GetValue(ttfOnlyOption));
+                parseResult.GetValue(ttfOnlyOption),
+                parseResult.GetValue(forceRasterOption));
         });
 
         return batchCommand;
@@ -58,7 +61,7 @@ public static class BatchCommand
 
     public static async Task ExecuteAsync(
         string gamePath, string fontName, bool ps5Swizzle,
-        string? outputDir, bool sdfOnly, bool ttfOnly)
+        string? outputDir, bool sdfOnly, bool ttfOnly, bool forceRaster)
     {
         await Task.CompletedTask;
 
@@ -78,7 +81,7 @@ public static class BatchCommand
             return;
         }
 
-        var fontSpec = ResolveBatchFontSpec(fontName);
+        var fontSpec = ResolveBatchFontSpec(fontName, forceRaster);
         if (fontSpec == null)
         {
             AnsiConsole.MarkupLine($"[red]Font not found: {Markup.Escape(fontName)}[/]");
@@ -141,7 +144,7 @@ public static class BatchCommand
         AnsiConsole.MarkupLine($"[green]Batch complete: {replaced} font(s) replaced[/]");
     }
 
-    private static BatchFontSpec? ResolveBatchFontSpec(string fontName)
+    private static BatchFontSpec? ResolveBatchFontSpec(string fontName, bool forceRaster)
     {
         if (TryGetBuiltinPreset(fontName, out var preset))
         {
@@ -153,7 +156,7 @@ public static class BatchCommand
             {
                 SdfSource = ttfPath,
                 TtfPath = ttfPath,
-                ForceRaster = preset.ForceRaster,
+                ForceRaster = forceRaster || preset.ForceRaster,
             };
         }
 
@@ -168,7 +171,7 @@ public static class BatchCommand
             {
                 SdfSource = ttfPath ?? fontName,
                 TtfPath = ttfPath,
-                ForceRaster = false,
+                ForceRaster = forceRaster,
             };
         }
 
@@ -181,7 +184,7 @@ public static class BatchCommand
                 {
                     SdfSource = fontName,
                     TtfPath = fontName,
-                    ForceRaster = false,
+                    ForceRaster = forceRaster,
                 };
             }
 
@@ -197,7 +200,7 @@ public static class BatchCommand
                 {
                     SdfSource = fontName,
                     TtfPath = ttfPath,
-                    ForceRaster = false,
+                    ForceRaster = forceRaster,
                 };
             }
         }
@@ -231,7 +234,7 @@ public static class BatchCommand
             {
                 SdfSource = ttfPath ?? dir,
                 TtfPath = ttfPath,
-                ForceRaster = false,
+                ForceRaster = forceRaster,
             };
         }
 
@@ -242,7 +245,7 @@ public static class BatchCommand
             {
                 SdfSource = resolvedTtfPath,
                 TtfPath = resolvedTtfPath,
-                ForceRaster = false,
+                ForceRaster = forceRaster,
             };
         }
 

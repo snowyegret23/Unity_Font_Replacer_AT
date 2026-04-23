@@ -52,7 +52,7 @@ public static class CommandBuilder
         var paddingOption = CommandLineOptions.OptionalOption("--padding", 7, "Atlas padding");
         var charsetOption = CommandLineOptions.OptionalOption("--charset", MakeSdfCommand.DefaultCharsetArgument, "Charset file or literal");
         var renderModeOption = CommandLineOptions.OptionalOption("--rendermode", "sdf", "sdf / raster");
-        var filterModeOption = CommandLineOptions.OptionalOption("--filter-mode", "bilinear", "point / bilinear / trilinear");
+        var filterModeOption = CommandLineOptions.OptionalOption("--filter-mode", "auto", "auto / point / bilinear / trilinear");
         makeSdfCommand.Add(ttfOption);
         makeSdfCommand.Add(atlasSizeOption);
         makeSdfCommand.Add(pointSizeOption);

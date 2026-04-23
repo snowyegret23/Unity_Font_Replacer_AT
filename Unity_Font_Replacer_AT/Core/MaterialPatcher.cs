@@ -10,6 +10,37 @@ namespace UnityFontReplacer.Core;
 /// </summary>
 public static class MaterialPatcher
 {
+    private static readonly (string Key, float Value)[] RasterFloatDefaults =
+    [
+        ("_ColorMask", 15f),
+        ("_CullMode", 0f),
+        ("_MaskSoftnessX", 0f),
+        ("_MaskSoftnessY", 0f),
+        ("_Stencil", 0f),
+        ("_StencilComp", 8f),
+        ("_StencilOp", 0f),
+        ("_StencilReadMask", 255f),
+        ("_StencilWriteMask", 255f),
+        ("_VertexOffsetX", 0f),
+        ("_VertexOffsetY", 0f),
+    ];
+
+    private static readonly MaterialColorValue DefaultClipRect = new()
+    {
+        R = -32767f,
+        G = -32767f,
+        B = 32767f,
+        A = 32767f,
+    };
+
+    private static readonly MaterialColorValue DefaultFaceColor = new()
+    {
+        R = 1f,
+        G = 1f,
+        B = 1f,
+        A = 1f,
+    };
+
     private static readonly HashSet<string> MaterialPaddingScaleKeys =
     [
         "_GradientScale",
@@ -125,6 +156,15 @@ public static class MaterialPatcher
         if (plan.UseGameMaterial)
             return;
 
+        var sourceColors = plan.SourceMaterial?.ColorProperties ??
+                           new Dictionary<string, MaterialColorValue>(StringComparer.Ordinal);
+        if (plan.ForceRaster)
+        {
+            PruneSavedPropertiesForRaster(materialField, sourceColors);
+            ResetKeywords(materialField);
+            return;
+        }
+
         float replacementPadding = Math.Max(0, plan.ReplacementPadding);
         float targetPadding = plan.TargetPadding > 0 ? plan.TargetPadding : replacementPadding;
         float stylePaddingRatio = 1.0f;
@@ -135,8 +175,6 @@ public static class MaterialPatcher
 
         var sourceFloats = plan.SourceMaterial?.FloatProperties ??
                            new Dictionary<string, float>(StringComparer.Ordinal);
-        var sourceColors = plan.SourceMaterial?.ColorProperties ??
-                           new Dictionary<string, MaterialColorValue>(StringComparer.Ordinal);
 
         var existingFloatMap = ReadFloatMap(materialField);
         float gradientScale = ResolveGradientScale(
@@ -194,25 +232,38 @@ public static class MaterialPatcher
 
             EnsureColor(materialField, key, color);
         }
-
-        if (plan.ForceRaster)
-        {
-            EnsureFloat(materialField, "_OutlineWidth", 0f);
-            EnsureFloat(materialField, "_OutlineSoftness", 0f);
-            EnsureFloat(materialField, "_UnderlayOffsetX", 0f);
-            EnsureFloat(materialField, "_UnderlayOffsetY", 0f);
-            EnsureFloat(materialField, "_UnderlayDilate", 0f);
-            EnsureFloat(materialField, "_UnderlaySoftness", 0f);
-            EnsureFloat(materialField, "_UnderlayStrength", 0f);
-            EnsureFloat(materialField, "_GlowOffset", 0f);
-            EnsureFloat(materialField, "_GlowOuter", 0f);
-            EnsureFloat(materialField, "_GlowInner", 0f);
-            EnsureFloat(materialField, "_GlowPower", 0f);
-        }
-
         var finalGradientScale = ReadFloat(materialField, "_GradientScale") ?? gradientScale;
         if (replacementPadding > 0 && finalGradientScale > 0)
             EnsureFloat(materialField, "_ScaleRatioA", replacementPadding / finalGradientScale);
+    }
+
+    private static void PruneSavedPropertiesForRaster(
+        AssetTypeValueField materialField,
+        Dictionary<string, MaterialColorValue> sourceColors)
+    {
+        var savedProps = materialField["m_SavedProperties"];
+        if (savedProps.IsDummy)
+            return;
+
+        var faceTexRef = ReadTextureRef(savedProps, "_FaceTex");
+        var mainTexRef = ReadTextureRef(savedProps, "_MainTex");
+        var clipRect = ReadColor(materialField, "_ClipRect") ?? DefaultClipRect;
+        var faceColor = ReadColor(materialField, "_FaceColor") ?? DefaultFaceColor;
+        if (sourceColors.TryGetValue("_FaceColor", out var overrideFaceColor))
+            faceColor = overrideFaceColor;
+
+        RewriteTexEnvArray(savedProps["m_TexEnvs"]["Array"], new[]
+        {
+            ("_FaceTex", faceTexRef),
+            ("_MainTex", mainTexRef),
+        });
+        ClearArray(savedProps["m_Ints"]["Array"]);
+        RewriteFloatArray(savedProps["m_Floats"]["Array"], RasterFloatDefaults);
+        RewriteColorArray(savedProps["m_Colors"]["Array"], new[]
+        {
+            ("_ClipRect", clipRect),
+            ("_FaceColor", faceColor),
+        });
     }
 
     private static float ResolveGradientScale(
@@ -280,6 +331,53 @@ public static class MaterialPatcher
         return result;
     }
 
+    private static MaterialColorValue? ReadColor(AssetTypeValueField materialField, string propertyName)
+    {
+        var colors = materialField["m_SavedProperties"]["m_Colors"]["Array"];
+        if (colors.IsDummy)
+            return null;
+
+        foreach (var entry in colors.Children)
+        {
+            var first = entry["first"];
+            if (!first.IsDummy && first.AsString == propertyName)
+            {
+                var value = entry["second"];
+                return new MaterialColorValue
+                {
+                    R = value["r"].AsFloat,
+                    G = value["g"].AsFloat,
+                    B = value["b"].AsFloat,
+                    A = value["a"].AsFloat,
+                };
+            }
+        }
+
+        return null;
+    }
+
+    private static (int FileId, long PathId) ReadTextureRef(AssetTypeValueField savedProps, string propertyName)
+    {
+        var texEnvs = savedProps["m_TexEnvs"]["Array"];
+        if (texEnvs.IsDummy)
+            return (0, 0);
+
+        foreach (var entry in texEnvs.Children)
+        {
+            var first = entry["first"];
+            if (first.IsDummy || first.AsString != propertyName)
+                continue;
+
+            var texture = entry["second"]["m_Texture"];
+            if (texture.IsDummy)
+                break;
+
+            return (texture["m_FileID"].AsInt, texture["m_PathID"].AsLong);
+        }
+
+        return (0, 0);
+    }
+
     private static void EnsureFloat(AssetTypeValueField materialField, string propertyName, float value)
     {
         if (SetFloat(materialField, propertyName, value))
@@ -329,5 +427,78 @@ public static class MaterialPatcher
         field["g"].AsFloat = value.G;
         field["b"].AsFloat = value.B;
         field["a"].AsFloat = value.A;
+    }
+
+    private static void RewriteTexEnvArray(
+        AssetTypeValueField texEnvs,
+        IEnumerable<(string Key, (int FileId, long PathId) TextureRef)> entries)
+    {
+        if (texEnvs.IsDummy || texEnvs.Children.Count == 0)
+            return;
+
+        texEnvs.Children.Clear();
+        foreach (var (key, textureRef) in entries)
+        {
+            var elem = ValueBuilder.DefaultValueFieldFromArrayTemplate(texEnvs);
+            elem["first"].AsString = key;
+            var second = elem["second"];
+            second["m_Texture"]["m_FileID"].AsInt = textureRef.FileId;
+            second["m_Texture"]["m_PathID"].AsLong = textureRef.PathId;
+            second["m_Scale"]["x"].AsFloat = 1f;
+            second["m_Scale"]["y"].AsFloat = 1f;
+            second["m_Offset"]["x"].AsFloat = 0f;
+            second["m_Offset"]["y"].AsFloat = 0f;
+            texEnvs.Children.Add(elem);
+        }
+    }
+
+    private static void RewriteFloatArray(
+        AssetTypeValueField floats,
+        IEnumerable<(string Key, float Value)> entries)
+    {
+        if (floats.IsDummy || floats.Children.Count == 0)
+            return;
+
+        floats.Children.Clear();
+        foreach (var (key, value) in entries)
+        {
+            var elem = ValueBuilder.DefaultValueFieldFromArrayTemplate(floats);
+            elem["first"].AsString = key;
+            elem["second"].AsFloat = value;
+            floats.Children.Add(elem);
+        }
+    }
+
+    private static void RewriteColorArray(
+        AssetTypeValueField colors,
+        IEnumerable<(string Key, MaterialColorValue Value)> entries)
+    {
+        if (colors.IsDummy || colors.Children.Count == 0)
+            return;
+
+        colors.Children.Clear();
+        foreach (var (key, value) in entries)
+        {
+            var elem = ValueBuilder.DefaultValueFieldFromArrayTemplate(colors);
+            elem["first"].AsString = key;
+            WriteColor(elem["second"], value);
+            colors.Children.Add(elem);
+        }
+    }
+
+    private static void ClearArray(AssetTypeValueField arrayField)
+    {
+        if (!arrayField.IsDummy)
+            arrayField.Children.Clear();
+    }
+
+    private static void ResetKeywords(AssetTypeValueField materialField)
+    {
+        var shaderKeywords = materialField["m_ShaderKeywords"];
+        if (!shaderKeywords.IsDummy)
+            shaderKeywords.AsString = "";
+
+        ClearArray(materialField["m_ValidKeywords"]["Array"]);
+        ClearArray(materialField["m_InvalidKeywords"]["Array"]);
     }
 }
