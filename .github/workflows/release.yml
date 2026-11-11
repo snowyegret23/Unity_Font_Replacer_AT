@@ -28,7 +28,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 11.0.x
 
       - name: Restore
         run: dotnet restore .\Unity_Font_Replacer_AT\UnityFontReplacer.csproj
