@@ -27,7 +27,6 @@ internal static class AddressablesCatalog
         string dataPath, IEnumerable<(string SourcePath, string SavedPath)> savedBundles)
     {
         var bundleSizes = new Dictionary<string, long>(Names);
-        var bundlePaths = new HashSet<string>(Names);
         foreach (var (source, saved) in savedBundles)
         {
             string relative = Path.GetRelativePath(dataPath, source).Replace('\\', '/');
@@ -35,15 +34,17 @@ internal static class AddressablesCatalog
                 !HasBundleSignature(saved))
                 continue;
 
-            AddSize(bundleSizes, Basename(source), new FileInfo(saved).Length);
-            bundlePaths.Add(relative["StreamingAssets/aa/".Length..]);
+            string bundlePath = relative["StreamingAssets/aa/".Length..];
+            if (!IsSimpleRelativePath(bundlePath) ||
+                !bundleSizes.TryAdd(bundlePath, new FileInfo(saved).Length))
+                throw new InvalidDataException($"Invalid or ambiguous modified Addressables path: {bundlePath}");
         }
 
         if (bundleSizes.Count == 0)
             return [];
 
         var updates = new List<CatalogUpdate>();
-        var remaining = new HashSet<string>(bundlePaths, Names);
+        var remaining = new HashSet<string>(bundleSizes.Keys, Names);
         var enumerationOptions = new EnumerationOptions
         {
             RecurseSubdirectories = true,
@@ -59,7 +60,7 @@ internal static class AddressablesCatalog
                 continue;
 
             byte[] original = File.ReadAllBytes(path);
-            var (bytes, _, paths) = PatchCore(original, bundleSizes, () => ReadBuildTarget(settings), bundlePaths);
+            var (bytes, paths) = Patch(original, bundleSizes, () => ReadBuildTarget(settings));
             remaining.ExceptWith(paths);
             if (!original.AsSpan().SequenceEqual(bytes))
                 updates.Add(new(path, bytes));
@@ -70,49 +71,39 @@ internal static class AddressablesCatalog
         return updates;
     }
 
+    // Bundle keys are normalized paths relative to StreamingAssets/aa.
     internal static (byte[] Bytes, string[] Matched) Patch(
         byte[] original, IReadOnlyDictionary<string, long> bundleSizes, Func<string> getBuildTarget)
     {
-        var (bytes, matched, _) = PatchCore(original, bundleSizes, getBuildTarget, bundlePaths: null);
-        return (bytes, matched);
-    }
-
-    private static (byte[] Bytes, string[] Matched, string[] Paths) PatchCore(
-        byte[] original, IReadOnlyDictionary<string, long> bundleSizes,
-        Func<string> getBuildTarget, HashSet<string>? bundlePaths)
-    {
         if (bundleSizes.Count == 0)
-            return (original, [], []);
-        var normalizedSizes = new Dictionary<string, long>(Names);
-        foreach (var (name, size) in bundleSizes)
-            AddSize(normalizedSizes, Basename(name), size);
+            return (original, []);
 
         var (extra, extraSlot, entries, ids) = ReadCatalog(original);
-        var matched = new HashSet<string>(Names);
         var matchedPaths = new HashSet<string>(Names);
         var expected = new List<(Options Record, long Size)>();
         bool buildTargetChecked = false;
         foreach (Options record in ReadOptions(entries, extra, ids))
         {
-            string[] names = record.InternalIds.Select(Basename)
-                .Append(Basename(ReadString(record.Value, "m_BundleName")))
-                .Where(normalizedSizes.ContainsKey).Distinct(Names).ToArray();
-            if (names.Length == 0)
+            // Match the path the local provider loads, not m_BundleName or the basename.
+            string?[] suffixes = record.InternalIds.Select(GetLocalBundlePath).ToArray();
+            string? target = Array.Find(suffixes, path => path is not null && bundleSizes.ContainsKey(path));
+            if (target is null)
                 continue;
-            long size = normalizedSizes[names[0]];
-            if (names.Any(name => normalizedSizes[name] != size))
-                throw new InvalidDataException("One Addressables record matches bundles of different sizes.");
+            long size = bundleSizes[target];
+            if (ReadFlag(record.Value, "m_UseUnityWebRequestForLocalBundles") ||
+                ReadFlag(record.Value, "m_UseUWRForLocalBundles"))
+                throw new InvalidDataException("Addressables bundle uses UnityWebRequest, not the local file provider.");
 
-            string[] suffixes = RequireLocalContract(record, names);
-            if (bundlePaths is not null)
+            // Changing one options record changes it for every location that references it.
+            foreach (string? path in suffixes)
             {
-                // A basename can occur in independent profile/subdirectories.
-                // Do not patch a location that cannot address the saved file.
-                if (!suffixes.Any(bundlePaths.Contains))
-                    continue;
-                if (suffixes.Any(path => !bundlePaths.Contains(path)))
+                if (path is null)
+                    throw new InvalidDataException("One Addressables record is shared with an unsupported internal ID.");
+                if (!bundleSizes.TryGetValue(path, out long pathSize))
                     throw new InvalidDataException("One Addressables record is shared by modified and unmodified paths.");
-                matchedPaths.UnionWith(suffixes);
+                if (size != pathSize)
+                    throw new InvalidDataException("One Addressables record matches bundles of different sizes.");
+                matchedPaths.Add(path);
             }
 
             if (!buildTargetChecked)
@@ -140,11 +131,10 @@ internal static class AddressablesCatalog
                 extra[pad + 1] = 0;
             }
             expected.Add((record, size));
-            matched.UnionWith(names);
         }
 
-        if (matched.Count == 0)
-            return (original, [], []);
+        if (matchedPaths.Count == 0)
+            return (original, []);
         byte[] base64 = Utf8.GetBytes(Convert.ToBase64String(extra));
         if (base64.Length != extraSlot.Length)
             throw new InvalidDataException("Unexpected Addressables extra data encoding or length.");
@@ -160,32 +150,21 @@ internal static class AddressablesCatalog
                 !actual.Value.GetProperty("m_BundleSize").TryGetInt64(out long length) || length != size)
                 throw new InvalidDataException("Addressables options verification failed.");
         }
-        return (patched, matched.OrderBy(name => name, Names).ToArray(), matchedPaths.ToArray());
+        return (patched, matchedPaths.OrderBy(path => path, Names).ToArray());
     }
 
-    private static string[] RequireLocalContract(Options record, string[] names)
+    private static string? GetLocalBundlePath(string raw)
     {
-        if (ReadFlag(record.Value, "m_UseUnityWebRequestForLocalBundles") ||
-            ReadFlag(record.Value, "m_UseUWRForLocalBundles"))
-            throw new InvalidDataException("Addressables bundle uses UnityWebRequest, not the local file provider.");
-
-        string[] matchingIds = record.InternalIds.Where(id => names.Contains(Basename(id), Names)).ToArray();
-        if (names.Any(name => !matchingIds.Any(id => Names.Equals(Basename(id), name))))
-            throw new InvalidDataException("Addressables bundle has no matching internal ID.");
-        var suffixes = new List<string>(matchingIds.Length);
-        foreach (string raw in matchingIds)
-        {
-            string id = raw.Trim().Replace('\\', '/');
-            if (!id.StartsWith(RuntimePrefix, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException($"Addressables internal ID is not local RuntimePath: {raw}");
-            string suffix = id[RuntimePrefix.Length..];
-            if (suffix.Split('/').Any(part => part.Length == 0 || part is "." or "..") ||
-                suffix.IndexOfAny([':', '?', '#', '%', '{', '}']) >= 0)
-                throw new InvalidDataException($"Addressables internal ID is not a simple local path: {raw}");
-            suffixes.Add(suffix);
-        }
-        return suffixes.ToArray();
+        string id = raw.Trim().Replace('\\', '/');
+        if (!id.StartsWith(RuntimePrefix, StringComparison.OrdinalIgnoreCase))
+            return null;
+        string suffix = id[RuntimePrefix.Length..];
+        return IsSimpleRelativePath(suffix) ? suffix : null;
     }
+
+    private static bool IsSimpleRelativePath(string path) =>
+        path.IndexOfAny([':', '?', '#', '%', '{', '}']) < 0 &&
+        !path.Split('/').Any(part => part.Length == 0 || part is "." or "..");
 
     private static bool ReadFlag(JsonElement value, string name)
     {
@@ -258,7 +237,7 @@ internal static class AddressablesCatalog
                 !(value.TryGetProperty("m_BundleName", out _) && value.TryGetProperty("m_Crc", out _)))
                 continue;
             yield return new(cursor, length, text, value.Clone(),
-                indices.Where(index => index >= 0 && index < ids.Length).Order().Select(index => ids[index]).ToArray());
+                indices.Order().Select(index => index >= 0 && index < ids.Length ? ids[index] : "").ToArray());
         }
     }
 
@@ -330,21 +309,6 @@ internal static class AddressablesCatalog
 
     private static string ReadString(JsonElement value, string name) =>
         value.TryGetProperty(name, out var field) && field.ValueKind == JsonValueKind.String ? field.GetString()! : "";
-
-    private static string Basename(string path)
-    {
-        path = path.Trim().Replace('\\', '/');
-        return path[(path.LastIndexOf('/') + 1)..];
-    }
-
-    private static void AddSize(Dictionary<string, long> sizes, string name, long size)
-    {
-        if (name.Length == 0 || size < 0)
-            throw new InvalidDataException("Invalid modified Addressables bundle name or size.");
-        if (sizes.TryGetValue(name, out long previous) && previous != size)
-            throw new InvalidDataException($"Addressables bundle '{name}' matched multiple sizes.");
-        sizes[name] = size;
-    }
 
     private static bool HasBundleSignature(string path)
     {
