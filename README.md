@@ -5,6 +5,16 @@
 `Unity_Font_Replacer_AT`는 `Unity_Font_Replacer`의 C# / `AssetsTools.NET` 포트입니다.  
 Unity 게임의 TTF 폰트와 SDF 폰트를 스캔, 교체, 추출, 생성합니다.
 
+
+## Python판과의 호환 범위
+
+- Python판의 평면 JSON과 `fonts` 래퍼 형식을 모두 읽습니다. 교체 대상은 파일명, 내부 에셋명, Path ID, 타입을 함께 확인합니다. 네 값이 같은 에셋이 여러 폴더에 있으면 모두 교체합니다.
+- `list --output-only <경로>`로 원본 게임 데이터 밖에 저장할 수 있습니다. 임시 저장본을 다시 열어 바뀐 오브젝트의 해시를 확인한 후 설치하고, 교체 작업에서 예외가 나면 이번 작업에서 이미 설치한 파일을 복구합니다. 강제 종료나 전원 손실까지 보장하는 기능은 아닙니다.
+- `parse --max-workers <수>`는 실제로 최대 작업자 수를 제한하며, JSON 결과는 입력 파일 순서를 유지합니다.
+- UnityFS v9 및 PS5 스위즐은 Python판을 사용하세요. Python판의 원본 TMP 폴백 보존, 동적 TMP 고정, 공유 아틀라스 전체 사전 검사와 Addressables 카탈로그 보정도 아직 AT판에 없습니다.
+
+AssetsTools.NET은 .NET 8 빌드로 검증한 업스트림 `dd4ba19`를 사용합니다. 그 다음 커밋 `3ef7117`은 텍스처 프로젝트에 .NET 10 타깃을 추가하므로 현재 .NET 8 SDK로는 빌드되지 않습니다.
+
 ## 한눈에 보기
 
 - TTF `Font` 교체
@@ -139,7 +149,7 @@ UnityFontReplacer_KO.exe batch --gamepath "D:\Games\MyGame" --font "D:\Fonts\MyP
 | `--ttfonly` | TTF만 교체 |
 | `--force-raster`, `--raster` | 모든 SDF 교체를 Raster 기준으로 강제 |
 | `--output-only <dir>` | 원본 대신 수정본만 별도 폴더에 저장 |
-| `--ps5-swizzle` | PS5 atlas swizzle 처리 |
+| `--ps5-swizzle` | AT 미지원. Python판 사용 필요 |
 
 ### `--font` 입력 규칙
 
@@ -175,7 +185,7 @@ UnityFontReplacer_KO.exe oneshot --gamepath "D:\Games\MyGame" --font "D:\Fonts\M
 | `--charset <file-or-text>` | 임시 생성 문자셋 |
 | `--filter-mode <mode>` | `auto` / `point` / `bilinear` / `trilinear` |
 | `--output-only <dir>` | 원본 대신 수정본만 별도 폴더에 저장 |
-| `--ps5-swizzle` | PS5 atlas swizzle 처리 |
+| `--ps5-swizzle` | AT 미지원. Python판 사용 필요 |
 
 ### 동작 규칙
 
@@ -192,7 +202,7 @@ UnityFontReplacer_KO.exe oneshot --gamepath "D:\Games\MyGame" --font "D:\Fonts\M
 
 ```bat
 UnityFontReplacer_KO.exe parse --gamepath "D:\Games\MyGame"
-UnityFontReplacer_KO.exe parse --gamepath "D:\Games\MyGame" --ps5-swizzle
+UnityFontReplacer_KO.exe parse --gamepath "D:\Games\MyGame" --max-workers 2
 ```
 
 ### 옵션
@@ -200,7 +210,7 @@ UnityFontReplacer_KO.exe parse --gamepath "D:\Games\MyGame" --ps5-swizzle
 | 옵션 | 설명 |
 |------|------|
 | `--gamepath`, `-g` | 게임 루트 또는 `_Data` / `Data` 폴더 경로 |
-| `--ps5-swizzle` | PS5 atlas swizzle 판별 |
+| `--ps5-swizzle` | AT 미지원. Python판 사용 필요 |
 | `--max-workers <n>` | 병렬 스캔 worker 수 |
 
 ### 결과
@@ -220,6 +230,7 @@ UnityFontReplacer_KO.exe list --gamepath "D:\Games\MyGame" --file "D:\Work\MyGam
 |------|------|
 | `--gamepath`, `-g` | 게임 루트 또는 `_Data` / `Data` 폴더 경로 |
 | `--file <file>` | `parse`로 만든 JSON 경로 |
+| `--output-only <dir>` | 게임 데이터 밖에 수정본 저장 |
 
 ### `Replace_to` 규칙
 

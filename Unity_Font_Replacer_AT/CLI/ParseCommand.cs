@@ -32,7 +32,7 @@ public static class ParseCommand
         using var ctx = new AssetsContext(resolved.DataPath, resolved.ManagedPath);
 
         var scanner = new FontScanner(ctx);
-        var entries = scanner.ScanAll(resolved.AssetFiles, ps5Swizzle);
+        var entries = scanner.ScanAll(resolved.AssetFiles, ps5Swizzle, maxWorkers);
 
         AnsiConsole.MarkupLine(Strings.Get("scan_complete", entries.TtfCount, entries.TmpCount));
 

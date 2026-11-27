@@ -66,12 +66,20 @@ public class AssetsContext : IDisposable
 
     public BundleFileInstance LoadBundleFile(string path)
     {
+        BundleProcessor.EnsureSupportedBundle(path);
         return Manager.LoadBundleFile(path);
     }
 
     public AssetsFileInstance LoadAssetsFileFromBundle(BundleFileInstance bundle, int index = 0)
     {
         return Manager.LoadAssetsFileFromBundle(bundle, index);
+    }
+
+    internal static void ReleaseLoadedFiles(AssetsManager manager)
+    {
+        // UnloadAll also disposes the MonoCecil resolver. Keep it alive between files.
+        manager.UnloadAllAssetsFiles(clearCache: true);
+        manager.UnloadAllBundleFiles();
     }
 
     public string? DetectEngineVersion()
@@ -120,7 +128,7 @@ public class AssetsContext : IDisposable
             }
             finally
             {
-                Manager.UnloadAll(false);
+                ReleaseLoadedFiles(Manager);
             }
         }
 

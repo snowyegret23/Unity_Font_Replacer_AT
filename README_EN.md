@@ -5,6 +5,16 @@
 `Unity_Font_Replacer_AT` is the C# / `AssetsTools.NET` port of `Unity_Font_Replacer`.  
 It scans, replaces, exports, and generates Unity TTF and SDF fonts.
 
+
+## Compatibility with the Python edition
+
+- Reads both flat Python mappings and the wrapped `fonts` format. Replacement matches the outer file name, inner asset name, Path ID, and type. Identical tuples in different directories are all replaced.
+- `list --output-only <dir>` writes outside the game data directory. Staged saves are reopened and modified object bytes are checked by hash before install. Earlier writes are restored if replacement raises an error. This is not crash- or power-loss recovery.
+- `parse --max-workers <n>` limits actual concurrent workers and preserves input order in the emitted mapping.
+- Use the Python edition for UnityFS v9 and PS5 swizzled atlases. Original TMP fallbacks, freezing dynamic TMP, whole-game shared-atlas preflight, and Addressables catalog updates are also not yet available in AT.
+
+AssetsTools.NET is pinned to upstream `dd4ba19`, verified with the .NET 8 SDK. The next commit, `3ef7117`, adds a .NET 10 target to the texture project and does not build with the current .NET 8 SDK.
+
 ## At a Glance
 
 - Replace Unity `Font` TTF assets
@@ -139,7 +149,7 @@ UnityFontReplacer_EN.exe batch --gamepath "D:\Games\MyGame" --font "D:\Fonts\MyP
 | `--ttfonly` | Replace TTF only |
 | `--force-raster`, `--raster` | Force raster behavior for all SDF replacements |
 | `--output-only <dir>` | Write modified files to another folder instead of in-place |
-| `--ps5-swizzle` | Enable PS5 atlas swizzle handling |
+| `--ps5-swizzle` | Not supported in AT. Use the Python edition. |
 
 ### Accepted `--font` forms
 
@@ -175,7 +185,7 @@ UnityFontReplacer_EN.exe oneshot --gamepath "D:\Games\MyGame" --font "D:\Fonts\M
 | `--charset <file-or-text>` | Temporary generation charset |
 | `--filter-mode <mode>` | `auto` / `point` / `bilinear` / `trilinear` |
 | `--output-only <dir>` | Write modified files to another folder instead of in-place |
-| `--ps5-swizzle` | Enable PS5 atlas swizzle handling |
+| `--ps5-swizzle` | Not supported in AT. Use the Python edition. |
 
 ### Behavior
 
@@ -192,7 +202,7 @@ UnityFontReplacer_EN.exe oneshot --gamepath "D:\Games\MyGame" --font "D:\Fonts\M
 
 ```bat
 UnityFontReplacer_EN.exe parse --gamepath "D:\Games\MyGame"
-UnityFontReplacer_EN.exe parse --gamepath "D:\Games\MyGame" --ps5-swizzle
+UnityFontReplacer_EN.exe parse --gamepath "D:\Games\MyGame" --max-workers 2
 ```
 
 ### Options
@@ -200,7 +210,7 @@ UnityFontReplacer_EN.exe parse --gamepath "D:\Games\MyGame" --ps5-swizzle
 | Option | Description |
 |--------|-------------|
 | `--gamepath`, `-g` | Game root or `_Data` / `Data` directory |
-| `--ps5-swizzle` | Detect PS5 atlas swizzle state |
+| `--ps5-swizzle` | Not supported in AT. Use the Python edition. |
 | `--max-workers <n>` | Number of parallel scan workers |
 
 ### Output
@@ -220,6 +230,7 @@ UnityFontReplacer_EN.exe list --gamepath "D:\Games\MyGame" --file "D:\Work\MyGam
 |--------|-------------|
 | `--gamepath`, `-g` | Game root or `_Data` / `Data` directory |
 | `--file <file>` | Path to the JSON created by `parse` |
+| `--output-only <dir>` | Write modified files outside the game data directory |
 
 ### `Replace_to` rules
 

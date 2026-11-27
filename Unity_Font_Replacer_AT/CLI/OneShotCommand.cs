@@ -22,7 +22,7 @@ public static class OneShotCommand
             "TTF/OTF file path or resolvable font name",
             "-f");
 
-        var ps5Option = CommandLineOptions.OptionalOption<bool>("--ps5-swizzle", "Handle PS5 texture swizzle");
+        var ps5Option = CommandLineOptions.OptionalOption<bool>("--ps5-swizzle", "Not supported in AT; use the Python edition");
         var outputOption = CommandLineOptions.OptionalOption<string?>("--output-only", "Write modified files to this directory instead of in-place");
         var sdfOnlyOption = CommandLineOptions.OptionalOption<bool>("--sdfonly", "Replace SDF fonts only");
         var ttfOnlyOption = CommandLineOptions.OptionalOption<bool>("--ttfonly", "Replace TTF fonts only");

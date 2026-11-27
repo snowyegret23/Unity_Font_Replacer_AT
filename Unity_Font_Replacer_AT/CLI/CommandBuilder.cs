@@ -9,7 +9,7 @@ public static class CommandBuilder
         // parse subcommand
         var parseCommand = new Command("parse", Strings.Get("cmd_parse"));
         var parseGamePathOption = CommandLineOptions.CreateGamePathOption();
-        var parsePs5Option = CommandLineOptions.OptionalOption<bool>("--ps5-swizzle", "Detect PS5 swizzle state");
+        var parsePs5Option = CommandLineOptions.OptionalOption<bool>("--ps5-swizzle", "Not supported in AT; use the Python edition");
         var parseMaxWorkersOption = CommandLineOptions.OptionalOption("--max-workers", 1, "Max parallel scan workers");
         parseCommand.Add(parseGamePathOption);
         parseCommand.Add(parsePs5Option);
@@ -24,15 +24,18 @@ public static class CommandBuilder
 
         // list subcommand
         var listCommand = new Command("list", Strings.Get("cmd_list"));
-        var listGamePathOption = CommandLineOptions.CreateGamePathOption();
+        var listGamePathOption = CommandLineOptions.OptionalOption<string?>("--gamepath", description: "Game path (overrides game_path in JSON)", aliases: ["-g"]);
         var listFileOption = CommandLineOptions.RequiredOption<string>("--file", "Font mapping JSON file");
+        var listOutputOption = CommandLineOptions.OptionalOption<string?>("--output-only", "Write modified files to this directory instead of in-place");
         listCommand.Add(listGamePathOption);
         listCommand.Add(listFileOption);
+        listCommand.Add(listOutputOption);
         listCommand.SetAction(async parseResult =>
         {
             await ListCommand.ExecuteAsync(
-                parseResult.GetRequiredValue(listGamePathOption),
-                parseResult.GetRequiredValue(listFileOption));
+                parseResult.GetValue(listGamePathOption),
+                parseResult.GetRequiredValue(listFileOption),
+                parseResult.GetValue(listOutputOption));
         });
 
         // export subcommand

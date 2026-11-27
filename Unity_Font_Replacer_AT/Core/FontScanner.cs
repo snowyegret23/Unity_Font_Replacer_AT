@@ -12,7 +12,6 @@ public class FontScanner
     // 공유 리소스
     private string? _tpkPath;
     private string? _engineVersion;
-    private IMonoBehaviourTemplateGenerator? _sharedMonoGen;
 
     public FontScanner(AssetsContext ctx)
     {
@@ -21,100 +20,92 @@ public class FontScanner
 
     public ScanResult ScanAll(List<string> assetFiles, bool detectPs5Swizzle = false, int maxWorkers = 1)
     {
-        var result = new ScanResult();
-        result.EngineVersion = _ctx.DetectEngineVersion();
+        if (detectPs5Swizzle)
+            throw new NotSupportedException("PS5 swizzle detection is not implemented in AT. Use the Python edition.");
+        if (maxWorkers < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxWorkers), "At least one scan worker is required.");
 
-        // 공유 리소스 한 번만 로드
-        LoadSharedResources(result.EngineVersion);
+        var result = new ScanResult { EngineVersion = _ctx.DetectEngineVersion() };
+        _engineVersion = result.EngineVersion;
+        if (assetFiles.Count == 0)
+            return result;
+        _tpkPath = ClassDataDownloader.EnsureClassData();
 
-        using var status = new StatusBar(maxWorkers);
+        using var status = new StatusBar(Math.Min(maxWorkers, assetFiles.Count));
         status.SetTotal(assetFiles.Count);
         status.Log(Strings.Get("scan_start"));
-
-        int fileIdx = 0;
-
-        foreach (var filePath in assetFiles)
-        {
-            fileIdx++;
-            var fileName = Path.GetFileName(filePath);
-            status.Update(fileIdx, fileName);
-
-            try
+        var results = ScanInOrder<AssetsManager, List<FontEntry>>(
+            assetFiles, maxWorkers, CreateWorkerManager,
+            (path, manager) =>
             {
-                if (ShouldSkipFile(filePath, fileName))
-                    continue;
-
-                var entries = ScanFileIsolated(filePath, fileName);
-                result.Entries.AddRange(entries);
-
-                foreach (var e in entries)
+                var fileName = Path.GetFileName(path);
+                try
                 {
-                    var shortFile = TruncMiddle(e.File, 50);
-                    if (e.Type == FontType.TTF)
-                        status.Log($"TTF: {e.Name} ({shortFile} #{e.PathId})");
-                    else
-                    {
-                        var schema = e.Schema == TmpSchemaVersion.New ? "new" : "old";
-                        status.Log($"SDF: {e.Name} ({schema}, {shortFile} #{e.PathId})");
-                    }
+                    if (ShouldSkipFile(path, fileName))
+                        return [];
+                    var entries = ScanFileIsolated(path, fileName, manager);
+                    foreach (var entry in entries)
+                        status.Log($"{entry.Type}: {entry.Name} ({TruncMiddle(entry.File, 50)} #{entry.PathId})");
+                    return entries;
                 }
-            }
-            catch (Exception ex)
-            {
-                // 파싱 불가 파일은 무시하되 디버깅용 로그
-                if (fileName.Contains("font", StringComparison.OrdinalIgnoreCase))
+                catch (Exception ex)
+                {
                     status.Log($"[WARN] {fileName}: {ex.Message}");
-            }
-        }
-
+                    return [];
+                }
+                finally { status.Increment(fileName); }
+            },
+            manager => manager.UnloadAll(true));
+        foreach (var entries in results)
+            result.Entries.AddRange(entries);
         status.Clear();
         Console.WriteLine(Strings.Get("scan_complete", result.TtfCount, result.TmpCount));
         return result;
     }
 
-    private void LoadSharedResources(string? engineVersion)
+    // Keep result order independent of which worker finishes first. Each worker owns its own
+    // MonoCecil resolver; AssetsTools managers/readers are not shared between workers.
+    internal static TResult[] ScanInOrder<TWorker, TResult>(
+        IReadOnlyList<string> paths, int workers, Func<TWorker> create,
+        Func<string, TWorker, TResult> scan, Action<TWorker> close)
     {
-        _engineVersion = engineVersion;
-        _tpkPath = ClassDataDownloader.EnsureClassData();
-
-        if (_ctx.ManagedPath != null && Directory.Exists(_ctx.ManagedPath))
-            _sharedMonoGen = new MonoCecilTempGenerator(_ctx.ManagedPath);
+        var results = new TResult[paths.Count];
+        var options = new ParallelOptions { MaxDegreeOfParallelism = workers };
+        Parallel.For(0, paths.Count, options, create, (index, _, worker) =>
+        {
+            results[index] = scan(paths[index], worker);
+            return worker;
+        }, close);
+        return results;
     }
 
-    /// <summary>
-    /// 파일마다 새 AssetsManager 생성 → 공유 리소스 참조 → 스캔 → 완전 해제.
-    /// 번들의 언팩 데이터가 남지 않도록 완전 격리.
-    /// </summary>
-    private List<FontEntry> ScanFileIsolated(string filePath, string displayName)
+    private AssetsManager CreateWorkerManager()
     {
-        var entries = new List<FontEntry>();
-        var am = new AssetsManager();
-        am.UseTemplateFieldCache = true;
-        am.UseQuickLookup = true;
-
-        // ClassDB 로드 (tpk 파일 읽기는 가벼움, 메모리에 누적 안 됨)
+        var manager = new AssetsManager { UseTemplateFieldCache = true, UseQuickLookup = true };
         if (_tpkPath != null && _engineVersion != null)
         {
-            am.LoadClassPackage(_tpkPath);
-            am.LoadClassDatabaseFromPackage(_engineVersion);
+            manager.LoadClassPackage(_tpkPath);
+            manager.LoadClassDatabaseFromPackage(_engineVersion);
         }
-        if (_sharedMonoGen != null) am.MonoTempGenerator = _sharedMonoGen;
+        if (_ctx.ManagedPath is { } managed && Directory.Exists(managed))
+            manager.MonoTempGenerator = new MonoCecilTempGenerator(managed);
+        return manager;
+    }
 
+    private static List<FontEntry> ScanFileIsolated(string filePath, string displayName, AssetsManager manager)
+    {
+        var entries = new List<FontEntry>();
         try
         {
             if (IsBundleFile(filePath))
-                ScanBundle(am, filePath, displayName, entries);
+            {
+                BundleProcessor.EnsureSupportedBundle(filePath);
+                ScanBundle(manager, filePath, displayName, entries);
+            }
             else
-                ScanAssetsFile(am, filePath, displayName, entries);
+                ScanAssetsFile(manager, filePath, displayName, entries);
         }
-        catch { }
-        finally
-        {
-            // MonoGen은 공유 → null로 해제 방지. 나머지는 전부 해제.
-            am.MonoTempGenerator = null;
-            am.UnloadAll(true);
-            GC.Collect(2, GCCollectionMode.Forced, false);
-        }
+        finally { AssetsContext.ReleaseLoadedFiles(manager); }
 
         return entries;
     }

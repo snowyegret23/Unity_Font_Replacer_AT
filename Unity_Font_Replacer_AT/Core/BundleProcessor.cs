@@ -14,53 +14,50 @@ public static class BundleProcessor
         string? outputPath = null,
         bool recompress = false)
     {
-        // 수정된 각 에셋 파일을 번들 디렉토리 엔트리에 적용
+        SaveBundle(bunInst, modifiedFiles, outputPath, transaction: null, recompress: recompress);
+    }
+
+    internal static void SaveBundle(
+        BundleFileInstance bunInst, List<(int dirIndex, AssetsFileInstance fileInst)> modifiedFiles,
+        string? outputPath, ReplacementTransaction? transaction, bool recompress = false)
+    {
         var dirInfos = bunInst.file.BlockAndDirInfo.DirectoryInfos;
+        var manifests = modifiedFiles.ToDictionary(pair => dirInfos[pair.dirIndex].Name,
+            pair => SavedAssetValidation.Capture(pair.fileInst.file), StringComparer.Ordinal);
         foreach (var (dirIndex, fileInst) in modifiedFiles)
-        {
             dirInfos[dirIndex].SetNewData(fileInst.file);
-        }
 
         var targetPath = outputPath ?? bunInst.path;
-        var isInPlace = string.Equals(
-            Path.GetFullPath(targetPath),
-            Path.GetFullPath(bunInst.path),
-            StringComparison.OrdinalIgnoreCase);
-
-        if (isInPlace)
-        {
-            // 먼저 임시 파일에 쓰기
-            var tempPath = targetPath + ".tmp";
-            try
+        var isInPlace = Path.GetFullPath(targetPath).Equals(Path.GetFullPath(bunInst.path),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        ReplacementTransaction.WriteValidated(targetPath,
+            path => WriteBundle(bunInst, path, recompress), path =>
             {
-                WriteBundle(bunInst, tempPath, recompress);
+                var manager = new AssetsManager();
+                try
+                {
+                    var saved = manager.LoadBundleFile(path);
+                    var entries = saved.file.BlockAndDirInfo.DirectoryInfos;
+                    if (!entries.Select(entry => entry.Name).SequenceEqual(dirInfos.Select(entry => entry.Name)))
+                        throw new InvalidDataException("Saved bundle directory does not match the source.");
+                    for (int i = 0; i < entries.Count; i++)
+                    {
+                        if (manifests.TryGetValue(entries[i].Name, out var manifest))
+                            SavedAssetValidation.Verify(manager.LoadAssetsFileFromBundle(saved, i).file, manifest);
+                    }
+                }
+                finally { manager.UnloadAll(true); }
+            }, isInPlace ? () => CloseBundleReaders(bunInst) : null, transaction);
+    }
 
-                // 원본 파일 핸들 닫기 (rename 전에 반드시 필요)
-                CloseBundleReaders(bunInst);
-
-                var backupPath = targetPath + ".bak";
-                if (File.Exists(backupPath))
-                    File.Delete(backupPath);
-
-                File.Move(targetPath, backupPath);
-                File.Move(tempPath, targetPath);
-                File.Delete(backupPath);
-            }
-            catch
-            {
-                if (File.Exists(tempPath))
-                    File.Delete(tempPath);
-                throw;
-            }
-        }
-        else
-        {
-            var dir = Path.GetDirectoryName(targetPath);
-            if (dir != null && !Directory.Exists(dir))
-                Directory.CreateDirectory(dir);
-
-            WriteBundle(bunInst, targetPath, recompress);
-        }
+    internal static void EnsureSupportedBundle(string path)
+    {
+        using var stream = File.OpenRead(path);
+        Span<byte> prefix = stackalloc byte[12];
+        int read = stream.ReadAtLeast(prefix, prefix.Length, throwOnEndOfStream: false);
+        if (read == prefix.Length && prefix[..8].SequenceEqual("UnityFS\0"u8) &&
+            System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(prefix[8..]) >= 9)
+            throw new NotSupportedException("UnityFS v9 and newer are not supported for writing by AssetsTools.NET. Use the Python edition.");
     }
 
     private static void WriteBundle(BundleFileInstance bunInst, string path, bool recompress)

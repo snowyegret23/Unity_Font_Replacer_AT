@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Spectre.Console;
 using UnityFontReplacer.Core;
 using UnityFontReplacer.Models;
@@ -7,7 +6,7 @@ namespace UnityFontReplacer.CLI;
 
 public static class ListCommand
 {
-    public static async Task ExecuteAsync(string gamePath, string jsonFile)
+    public static async Task ExecuteAsync(string? gamePath, string jsonFile, string? outputDir = null)
     {
         await Task.CompletedTask;
 
@@ -18,17 +17,14 @@ public static class ListCommand
         }
 
         var json = await File.ReadAllTextAsync(jsonFile, System.Text.Encoding.UTF8);
-        var mapping = JsonSerializer.Deserialize<FontMapping>(json);
-        if (mapping == null)
-        {
-            AnsiConsole.MarkupLine("[red]Failed to parse JSON mapping[/]");
-            return;
-        }
+        var mapping = FontMapping.Parse(json);
 
         // gamePath 인자가 있으면 매핑의 game_path를 덮어쓰기
         if (!string.IsNullOrWhiteSpace(gamePath))
             mapping.GamePath = gamePath;
 
+        if (string.IsNullOrWhiteSpace(mapping.GamePath))
+            throw new ArgumentException("Specify --gamepath when the mapping does not include game_path.");
         var resolved = GamePathResolver.Resolve(mapping.GamePath);
         if (resolved == null)
         {
@@ -69,7 +65,8 @@ public static class ListCommand
         }
 
         var replacer = new FontReplacer(ctx);
-        var replaced = replacer.ReplaceFromMapping(mapping);
+        replacer.BuildCabMappings(resolved.AssetFiles);
+        var replaced = replacer.ReplaceFromMapping(mapping, outputDir);
 
         AnsiConsole.MarkupLine($"[green]Replacement complete: {replaced} font(s) replaced[/]");
     }

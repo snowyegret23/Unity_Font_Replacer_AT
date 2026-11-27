@@ -12,6 +12,10 @@ public class FontReplacer
 {
     private static readonly int[] BuiltinPaddingVariants = { 5, 7, 15 };
     private readonly AssetsContext _ctx;
+    private ReplacementTransaction? _transaction;
+    private readonly HashSet<FontEntry> _matchedEntries = [];
+    private readonly HashSet<(string, long)> _patchedTextures = [];
+    private readonly HashSet<(string, long)> _patchedMaterials = [];
 
     // 크로스 파일 텍스처 교체 보류: (논리 대상명, PathId) → PNG + atlas fallback material plan
     private readonly Dictionary<(string targetName, long pathId), DeferredTextureReplacement> _pendingCrossBundleTextures = new();
@@ -22,6 +26,7 @@ public class FontReplacer
     // CAB 이름 또는 standalone assets 파일명 → 실제 파일 경로
     private readonly Dictionary<string, string> _cabToBundlePath =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _ambiguousCabNames = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Dictionary<(string ttfPath, int padding, bool rasterMode), string> _generatedSdfDirCache =
         new();
@@ -52,7 +57,12 @@ public class FontReplacer
 
     public void RegisterCabMapping(string cabName, string bundlePath)
     {
-        _cabToBundlePath[cabName] = bundlePath;
+        string name = NormalizeEntryName(cabName);
+        if (_cabToBundlePath.TryGetValue(name, out var existing) &&
+            !Path.GetFullPath(existing).Equals(Path.GetFullPath(bundlePath), PathComparison))
+            _ambiguousCabNames.Add(name);
+        else
+            _cabToBundlePath[name] = bundlePath;
     }
 
     public void BuildCabMappings(List<string> assetFiles)
@@ -61,7 +71,7 @@ public class FontReplacer
         {
             var baseName = Path.GetFileName(filePath);
             if (!string.IsNullOrWhiteSpace(baseName))
-                _cabToBundlePath[baseName] = filePath;
+                RegisterCabMapping(baseName, filePath);
 
             if (!FontScanner.IsBundleFile(filePath))
                 continue;
@@ -74,7 +84,7 @@ public class FontReplacer
                 foreach (var dir in bundle.BlockAndDirInfo.DirectoryInfos)
                 {
                     if (!string.IsNullOrEmpty(dir.Name))
-                        _cabToBundlePath[dir.Name] = filePath;
+                        RegisterCabMapping(dir.Name, filePath);
                 }
             }
             catch
@@ -87,6 +97,11 @@ public class FontReplacer
     {
         _pendingCrossBundleTextures.Clear();
         _pendingCrossBundleMaterials.Clear();
+        _matchedEntries.Clear();
+        _patchedTextures.Clear();
+        _patchedMaterials.Clear();
+        var transaction = new ReplacementTransaction();
+        _transaction = transaction;
 
         try
         {
@@ -95,41 +110,62 @@ public class FontReplacer
             if (resolved == null)
                 return 0;
 
-            var byPhysicalFile = new Dictionary<string, List<FontEntry>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var entry in mapping.Fonts.Values.Where(e => !string.IsNullOrWhiteSpace(e.ReplaceTo)))
+            if (outputDir is not null)
+                SaveStrategy.CheckOutputRoot(resolved.DataPath, outputDir);
+
+            var requested = mapping.Fonts.Values.Where(e => !string.IsNullOrWhiteSpace(e.ReplaceTo))
+                .GroupBy(e => (NormalizeEntryName(e.File).ToUpperInvariant(), NormalizeEntryName(e.AssetsName).ToUpperInvariant(), e.PathId, e.Type))
+                .Select(group =>
+                {
+                    var first = group.First();
+                    if (group.Any(entry => entry.ReplaceTo != first.ReplaceTo || entry.ForceRaster != first.ForceRaster ||
+                                           entry.Swizzle != first.Swizzle || entry.ProcessSwizzle != first.ProcessSwizzle))
+                        throw new InvalidDataException($"Conflicting replacements for {first.File}/{first.AssetsName} #{first.PathId}.");
+                    if (string.IsNullOrWhiteSpace(first.File) || string.IsNullOrWhiteSpace(first.AssetsName))
+                        throw new InvalidDataException("Replacement entries require both File and assets_name.");
+                    return first;
+                }).ToList();
+
+            var byPhysicalFile = new Dictionary<string, List<FontEntry>>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            foreach (var entry in requested)
             {
-                var filePath = FindAssetFile(resolved.AssetFiles, entry.File);
-                if (filePath == null)
-                {
-                    AnsiConsole.MarkupLine($"[yellow]File not found: {Markup.Escape(entry.File)}[/]");
-                    continue;
-                }
+                var matches = resolved.AssetFiles.Where(path =>
+                    NormalizeEntryName(path).Equals(NormalizeEntryName(entry.File), StringComparison.OrdinalIgnoreCase)).ToList();
+                if (entry.Type == FontType.SDF && (ParseBoolFlag(entry.Swizzle) || ParseBoolFlag(entry.ProcessSwizzle)))
+                    throw new NotSupportedException("Use the Python edition for PS5 swizzled atlas replacement.");
+                if (matches.Count == 0)
+                    throw new FileNotFoundException($"Replacement target not found: {entry.File}");
 
-                if (!byPhysicalFile.TryGetValue(filePath, out var bucket))
+                foreach (string filePath in matches)
                 {
-                    bucket = [];
-                    byPhysicalFile[filePath] = bucket;
+                    if (!byPhysicalFile.TryGetValue(filePath, out var bucket))
+                    {
+                        bucket = [];
+                        byPhysicalFile[filePath] = bucket;
+                    }
+                    bucket.Add(entry);
                 }
-
-                bucket.Add(entry);
             }
 
             foreach (var (filePath, entries) in byPhysicalFile)
             {
-                try
+                try { replacedCount += ReplaceResolvedFile(filePath, entries, resolved.DataPath, outputDir); }
+                finally
                 {
-                    var count = ReplaceResolvedFile(filePath, entries, resolved.DataPath, outputDir);
-                    replacedCount += count;
-                }
-                catch (Exception ex)
-                {
-                    AnsiConsole.MarkupLine($"[red]Error processing {Markup.Escape(Path.GetFileName(filePath))}: {Markup.Escape(ex.Message)}[/]");
+                    // AssetsTools caches serialized files by basename, not outer path.
+                    // An identically named CAB in the next bundle must be loaded fresh.
+                    AssetsContext.ReleaseLoadedFiles(_ctx.Manager);
                 }
             }
 
-            _ctx.Manager.UnloadAll(false);
+            var unmatched = requested.Where(entry => !_matchedEntries.Contains(entry)).ToList();
+            if (unmatched.Count > 0)
+                throw new InvalidDataException("Replacement target(s) not applied: " +
+                    string.Join(", ", unmatched.Select(entry => $"{entry.File}/{entry.AssetsName} #{entry.PathId} ({entry.Type})")));
+
+            AssetsContext.ReleaseLoadedFiles(_ctx.Manager);
             ReplaceStandaloneSdfMirrors(mapping, outputDir);
-            _ctx.Manager.UnloadAll(false);
+            AssetsContext.ReleaseLoadedFiles(_ctx.Manager);
 
             if (_pendingCrossBundleTextures.Count > 0 || _pendingCrossBundleMaterials.Count > 0)
             {
@@ -137,12 +173,43 @@ public class FontReplacer
                 replacedCount += ExecuteCrossBundleReplacements(outputDir, mapping.GamePath);
             }
 
+            if (_pendingCrossBundleTextures.Keys.Any(key => !_patchedTextures.Contains(key)) ||
+                _pendingCrossBundleMaterials.Keys.Any(key => !_patchedMaterials.Contains(key)))
+                throw new InvalidDataException("One or more external texture/material targets were not modified.");
+
+            transaction.Commit();
             return replacedCount;
+        }
+        catch (Exception failure)
+        {
+            try { AssetsContext.ReleaseLoadedFiles(_ctx.Manager); }
+            catch (Exception closeFailure) { Console.Error.WriteLine(closeFailure.Message); }
+            try { transaction.Rollback(); }
+            catch (Exception rollbackFailure) { throw new AggregateException(failure, rollbackFailure); }
+            throw;
         }
         finally
         {
+            _transaction = null;
             CleanupGeneratedSdfAssets();
         }
+    }
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    private static string NormalizeEntryName(string name) =>
+        Path.GetFileName(name.Replace('\\', '/'));
+
+    internal static bool MatchesInnerFile(FontEntry entry, string innerPath) =>
+        NormalizeEntryName(entry.AssetsName).Equals(NormalizeEntryName(innerPath), StringComparison.OrdinalIgnoreCase);
+
+    private string ReadPathFor(string original, string dataPath, string? outputDir)
+    {
+        if (outputDir is null)
+            return original;
+        var output = SaveStrategy.ResolveOutputPath(original, dataPath, outputDir);
+        return _transaction?.HasPublished(output) == true ? output : original;
     }
 
     private int ExecuteCrossBundleReplacements(string? outputDir, string gamePath)
@@ -159,8 +226,10 @@ public class FontReplacer
 
         foreach (var logicalTarget in logicalTargets)
         {
+            if (_ambiguousCabNames.Contains(logicalTarget))
+                throw new InvalidDataException($"External CAB '{logicalTarget}' matches multiple files.");
             if (!_cabToBundlePath.TryGetValue(logicalTarget, out var targetPath))
-                continue;
+                throw new InvalidDataException($"External CAB '{logicalTarget}' was not found.");
 
             if (!targetToWork.TryGetValue(targetPath, out var workSet))
             {
@@ -197,7 +266,9 @@ public class FontReplacer
 
         try
         {
-            var bunInst = am.LoadBundleFile(bundlePath);
+            var inputPath = ReadPathFor(bundlePath, resolved?.DataPath ?? "", outputDir);
+            BundleProcessor.EnsureSupportedBundle(inputPath);
+            var bunInst = am.LoadBundleFile(inputPath);
             var dirInfos = bunInst.file.BlockAndDirInfo.DirectoryInfos;
             var modifiedFiles = new List<(int dirIndex, AssetsFileInstance fileInst)>();
 
@@ -216,13 +287,9 @@ public class FontReplacer
                 var savePath = outputDir != null && resolved != null
                     ? SaveStrategy.ResolveOutputPath(bundlePath, resolved.DataPath, outputDir)
                     : null;
-                BundleProcessor.SaveBundle(bunInst, modifiedFiles, savePath);
+                BundleProcessor.SaveBundle(bunInst, modifiedFiles, savePath, _transaction);
                 AnsiConsole.MarkupLine($"[green]Cross-file saved: {Path.GetFileName(bundlePath)}[/]");
             }
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Cross-file error ({Path.GetFileName(bundlePath)}): {Markup.Escape(ex.Message)}[/]");
         }
         finally
         {
@@ -243,19 +310,15 @@ public class FontReplacer
 
         try
         {
-            var inst = am.LoadAssetsFile(assetPath, loadDeps: true);
+            var inst = am.LoadAssetsFile(ReadPathFor(assetPath, resolved?.DataPath ?? "", outputDir), loadDeps: true);
             if (ApplyDeferredReplacements(am, inst, logicalTargets, ref count))
             {
                 var savePath = outputDir != null && resolved != null
                     ? SaveStrategy.ResolveOutputPath(assetPath, resolved.DataPath, outputDir)
                     : null;
-                SaveStrategy.SaveAssetsFile(inst, savePath);
+                SaveStrategy.SaveAssetsFile(inst, savePath, _transaction);
                 AnsiConsole.MarkupLine($"[green]Cross-file saved: {Path.GetFileName(assetPath)}[/]");
             }
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Cross-file error ({Path.GetFileName(assetPath)}): {Markup.Escape(ex.Message)}[/]");
         }
         finally
         {
@@ -279,7 +342,8 @@ public class FontReplacer
 
         foreach (var kv in _pendingCrossBundleTextures)
         {
-            if (!logicalTargets.Contains(kv.Key.targetName))
+            if (!logicalTargets.Contains(kv.Key.targetName) ||
+                !NormalizeEntryName(kv.Key.targetName).Equals(NormalizeEntryName(inst.path), StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var texInfo = TextureHandler.FindTextureByPathId(inst, kv.Key.pathId);
@@ -294,6 +358,7 @@ public class FontReplacer
                 kv.Value.MaterialFallbackPlan,
                 exactMaterialPathIds);
 
+            _patchedTextures.Add(kv.Key);
             modified = true;
             count++;
             AnsiConsole.MarkupLine($"[green]Cross-file atlas: PathId={kv.Key.pathId}[/]");
@@ -301,7 +366,8 @@ public class FontReplacer
 
         foreach (var kv in _pendingCrossBundleMaterials)
         {
-            if (!logicalTargets.Contains(kv.Key.targetName))
+            if (!logicalTargets.Contains(kv.Key.targetName) ||
+                !NormalizeEntryName(kv.Key.targetName).Equals(NormalizeEntryName(inst.path), StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var matInfo = MaterialPatcher.FindMaterialByPathId(inst, kv.Key.pathId);
@@ -309,6 +375,7 @@ public class FontReplacer
                 continue;
 
             MaterialPatcher.PatchForReplacement(am, inst, matInfo, kv.Value);
+            _patchedMaterials.Add(kv.Key);
             modified = true;
         }
 
@@ -379,7 +446,7 @@ public class FontReplacer
         string dataPath,
         string? outputDir)
     {
-        var inst = _ctx.LoadAssetsFile(filePath);
+        var inst = _ctx.LoadAssetsFile(ReadPathFor(filePath, dataPath, outputDir));
         int count = ReplaceStandaloneSdfMirrorsInAssetsInstance(inst, patches);
 
         if (count > 0)
@@ -387,7 +454,7 @@ public class FontReplacer
             var savePath = outputDir != null
                 ? SaveStrategy.ResolveOutputPath(filePath, dataPath, outputDir)
                 : null;
-            SaveStrategy.SaveAssetsFile(inst, savePath);
+            SaveStrategy.SaveAssetsFile(inst, savePath, _transaction);
         }
 
         return count;
@@ -399,7 +466,7 @@ public class FontReplacer
         string dataPath,
         string? outputDir)
     {
-        var bunInst = _ctx.LoadBundleFile(filePath);
+        var bunInst = _ctx.LoadBundleFile(ReadPathFor(filePath, dataPath, outputDir));
         var dirInfos = bunInst.file.BlockAndDirInfo.DirectoryInfos;
         int totalCount = 0;
         var modifiedFiles = new List<(int dirIndex, AssetsFileInstance fileInst)>();
@@ -409,18 +476,12 @@ public class FontReplacer
             if (!dirInfos[i].IsSerialized)
                 continue;
 
-            try
+            var inst = _ctx.LoadAssetsFileFromBundle(bunInst, i);
+            int count = ReplaceStandaloneSdfMirrorsInAssetsInstance(inst, patches);
+            if (count > 0)
             {
-                var inst = _ctx.LoadAssetsFileFromBundle(bunInst, i);
-                int count = ReplaceStandaloneSdfMirrorsInAssetsInstance(inst, patches);
-                if (count > 0)
-                {
-                    modifiedFiles.Add((i, inst));
-                    totalCount += count;
-                }
-            }
-            catch
-            {
+                modifiedFiles.Add((i, inst));
+                totalCount += count;
             }
         }
 
@@ -429,7 +490,7 @@ public class FontReplacer
             var savePath = outputDir != null
                 ? SaveStrategy.ResolveOutputPath(filePath, dataPath, outputDir)
                 : null;
-            BundleProcessor.SaveBundle(bunInst, modifiedFiles, savePath);
+            BundleProcessor.SaveBundle(bunInst, modifiedFiles, savePath, _transaction);
         }
 
         return totalCount;
@@ -467,7 +528,7 @@ public class FontReplacer
                 var detail = string.IsNullOrWhiteSpace(textureName)
                     ? texInfo.PathId.ToString()
                     : $"{texInfo.PathId} / {textureName}";
-                AnsiConsole.MarkupLine($"[red]Standalone atlas replace failed ({Markup.Escape(detail)}): {Markup.Escape(ex.Message)}[/]");
+                throw new InvalidDataException($"Standalone atlas replacement failed ({detail}).", ex);
             }
         }
 
@@ -507,7 +568,7 @@ public class FontReplacer
 
     private int ReplaceInAssetsFile(string filePath, List<FontEntry> entries, string dataPath, string? outputDir)
     {
-        var inst = _ctx.LoadAssetsFile(filePath);
+        var inst = _ctx.LoadAssetsFile(ReadPathFor(filePath, dataPath, outputDir));
         int count = ReplaceInAssetsInstance(inst, entries);
 
         if (count > 0)
@@ -515,7 +576,7 @@ public class FontReplacer
             var savePath = outputDir != null
                 ? SaveStrategy.ResolveOutputPath(filePath, dataPath, outputDir)
                 : null;
-            SaveStrategy.SaveAssetsFile(inst, savePath);
+            SaveStrategy.SaveAssetsFile(inst, savePath, _transaction);
         }
 
         return count;
@@ -523,7 +584,7 @@ public class FontReplacer
 
     private int ReplaceInBundle(string filePath, List<FontEntry> entries, string dataPath, string? outputDir)
     {
-        var bunInst = _ctx.LoadBundleFile(filePath);
+        var bunInst = _ctx.LoadBundleFile(ReadPathFor(filePath, dataPath, outputDir));
         var dirInfos = bunInst.file.BlockAndDirInfo.DirectoryInfos;
         int totalCount = 0;
         var modifiedFiles = new List<(int dirIndex, AssetsFileInstance fileInst)>();
@@ -533,18 +594,14 @@ public class FontReplacer
             if (!dirInfos[i].IsSerialized)
                 continue;
 
-            try
+            if (!entries.Any(entry => MatchesInnerFile(entry, dirInfos[i].Name)))
+                continue;
+            var inst = _ctx.LoadAssetsFileFromBundle(bunInst, i);
+            int count = ReplaceInAssetsInstance(inst, entries);
+            if (count > 0)
             {
-                var inst = _ctx.LoadAssetsFileFromBundle(bunInst, i);
-                int count = ReplaceInAssetsInstance(inst, entries);
-                if (count > 0)
-                {
-                    modifiedFiles.Add((i, inst));
-                    totalCount += count;
-                }
-            }
-            catch
-            {
+                modifiedFiles.Add((i, inst));
+                totalCount += count;
             }
         }
 
@@ -553,7 +610,7 @@ public class FontReplacer
             var savePath = outputDir != null
                 ? SaveStrategy.ResolveOutputPath(filePath, dataPath, outputDir)
                 : null;
-            BundleProcessor.SaveBundle(bunInst, modifiedFiles, savePath);
+            BundleProcessor.SaveBundle(bunInst, modifiedFiles, savePath, _transaction);
         }
 
         return totalCount;
@@ -561,28 +618,30 @@ public class FontReplacer
 
     private int ReplaceInAssetsInstance(AssetsFileInstance inst, List<FontEntry> entries)
     {
-        var entryByPathId = entries.ToDictionary(e => e.PathId);
+        var targets = entries.Where(entry => MatchesInnerFile(entry, inst.path)).ToList();
+        var entryByPathId = targets.Where(entry => entry.Type == FontType.TTF).ToDictionary(e => e.PathId);
         int count = 0;
 
         foreach (var info in inst.file.GetAssetsOfType(AssetClassID.Font))
         {
-            if (!entryByPathId.TryGetValue(info.PathId, out var entry) || entry.Type != FontType.TTF)
+            if (!entryByPathId.TryGetValue(info.PathId, out var entry))
                 continue;
 
             try
             {
                 var ttfData = TtfFontHandler.LoadTtfFile(entry.ReplaceTo);
                 TtfFontHandler.ReplaceFontData(_ctx.Manager, inst, info, ttfData);
+                _matchedEntries.Add(entry);
                 count++;
                 AnsiConsole.MarkupLine($"[green]TTF replaced: {Markup.Escape(entry.Name)}[/]");
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]TTF replace failed ({Markup.Escape(entry.Name)}): {Markup.Escape(ex.Message)}[/]");
+                throw new InvalidDataException($"TTF replacement failed for {entry.Name} (#{entry.PathId}).", ex);
             }
         }
 
-        var sdfEntries = entryByPathId.Values.Where(e => e.Type == FontType.SDF).ToList();
+        var sdfEntries = targets.Where(e => e.Type == FontType.SDF).ToList();
         if (sdfEntries.Count > 0)
             count += ReplaceTmpFonts(inst, sdfEntries);
 
@@ -696,19 +755,23 @@ public class FontReplacer
                     }
                 }
 
+                if (targetAsset.MaterialPathId != 0 && !exactMaterialPatched)
+                    throw new InvalidDataException($"Referenced Material could not be resolved for {entry.Name}.");
+
                 if (!atlasReplaced)
                 {
                     AnsiConsole.MarkupLine($"[yellow]SDF skipped (atlas not resolvable): {Markup.Escape(entry.Name)}[/]");
                     continue;
                 }
 
+                _matchedEntries.Add(entry);
                 count++;
                 var detail = exactMaterialPatched ? "+atlas+material" : "+atlas";
                 AnsiConsole.MarkupLine($"[green]SDF replaced ({detail}): {Markup.Escape(entry.Name)}[/]");
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]SDF replace failed ({Markup.Escape(entry.Name)}): {Markup.Escape(ex.Message)}[/]");
+                throw new InvalidDataException($"SDF replacement failed for {entry.Name} (#{entry.PathId}).", ex);
             }
         }
 
@@ -1540,13 +1603,7 @@ public class FontReplacer
         if (string.IsNullOrWhiteSpace(pathName))
             return null;
 
-        if (pathName.Contains('/'))
-        {
-            var parts = pathName.Split('/');
-            return parts[^1];
-        }
-
-        return pathName;
+        return NormalizeEntryName(pathName);
     }
 
     private static string? FindAssetFile(List<string> assetFiles, string fileName)
