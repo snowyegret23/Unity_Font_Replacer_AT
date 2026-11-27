@@ -3,6 +3,11 @@ using AssetsTools.NET.Extra;
 using UnityFontReplacer.Core;
 using UnityFontReplacer.Models;
 
+AddressablesCatalogSmoke.Run();
+Ps5SwizzleChecks.Run();
+TmpParitySmoke.Run();
+TmpOriginalFallbackSmoke.Run();
+
 static void Assert(bool condition, string reason)
 {
     if (!condition)
@@ -153,13 +158,14 @@ try
         Directory.Delete(Path.Combine(outRoot, "sub"));
     }
 
-    string v9 = Path.Combine(root, "v9.bundle");
-    File.WriteAllBytes(v9, [.. "UnityFS\0"u8, 0, 0, 0, 9]);
+    string v9 = Path.Combine(root, "unsupported.bundle");
+    File.WriteAllBytes(v9, [.. "UnityFS\0"u8, 0, 0, 0, 10]);
     Reject<NotSupportedException>(() => BundleProcessor.EnsureSupportedBundle(v9));
 
     byte[] before = [1, 2, 3], after = [5, 6, 7, 8];
     MakeFixture(original, before);
     byte[] originalFile = File.ReadAllBytes(original);
+    V9Checks.Run(root, originalFile, after);
     var am = new AssetsManager();
     var tx = new ReplacementTransaction();
     try

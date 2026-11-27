@@ -1,260 +1,138 @@
-using System.Runtime.InteropServices;
+using System.Numerics;
 
 namespace UnityFontReplacer.Swizzle;
 
-/// <summary>
-/// PS5 Addrlib v2 기반 텍스처 스위즐/언스위즐.
-/// 비트 인터리빙 방식으로 타일 주소를 선형 주소로 변환.
-/// </summary>
+/// <summary>Python UFR's base-level PS5 tile permutation for uncompressed elements.</summary>
 public static class Ps5Swizzle
 {
-    /// <summary>
-    /// 스위즐 마스크를 계산한다.
-    /// width/height/bytesPerElement에 따라 X/Y 비트 마스크 결정.
-    /// </summary>
+    private static (int X, int Y) MicroTile(int bytesPerElement) => bytesPerElement switch
+    {
+        2 or 3 => (4, 3),
+        4 => (3, 2),
+        _ => (5, 4),
+    };
+
+    public static bool SupportsDimensions(int width, int height, int bytesPerElement)
+    {
+        var (x, y) = MicroTile(bytesPerElement);
+        return bytesPerElement > 0 && Ps5SwizzleConstants.IsPowerOfTwo(width)
+            && Ps5SwizzleConstants.IsPowerOfTwo(height) && width >= (1 << x) && height >= (1 << y);
+    }
+
     public static (long maskX, long maskY) ComputeSwizzleMasks(int width, int height, int bytesPerElement)
     {
-        long maskX = 0, maskY = 0;
-        int bit = 0;
-
-        int totalElements = width * height;
-        int bitsNeeded = 0;
-        int temp = totalElements * bytesPerElement - 1;
-        while (temp > 0) { bitsNeeded++; temp >>= 1; }
-
-        // 바이트 크기 비트
-        int bpeBits = 0;
-        temp = bytesPerElement - 1;
-        while (temp > 0) { bpeBits++; temp >>= 1; }
-
-        // 하위 비트: bytesPerElement 오프셋 (X에 할당)
-        for (int i = 0; i < bpeBits; i++)
+        if (!SupportsDimensions(width, height, bytesPerElement))
+            throw new ArgumentException($"Unsupported PS5 texture shape: {width}x{height}, {bytesPerElement} bytes per element.");
+        var (microX, microY) = MicroTile(bytesPerElement);
+        int moreX = BitOperations.Log2((uint)width) - microX;
+        int moreY = BitOperations.Log2((uint)height) - microY;
+        int offset = 0;
+        long x = 0, y = 0;
+        void Append(ref long mask, int bits)
         {
-            maskX |= 1L << bit;
-            bit++;
+            mask |= ((1L << bits) - 1) << offset;
+            offset += bits;
         }
-
-        // X/Y 비트 인터리빙
-        int xBits = 0, yBits = 0;
-        int xMax = 0, yMax = 0;
-        temp = width - 1;
-        while (temp > 0) { xMax++; temp >>= 1; }
-        temp = height - 1;
-        while (temp > 0) { yMax++; temp >>= 1; }
-
-        while (xBits < xMax || yBits < yMax)
-        {
-            if (xBits < xMax)
-            {
-                maskX |= 1L << bit;
-                bit++;
-                xBits++;
-            }
-            if (yBits < yMax)
-            {
-                maskY |= 1L << bit;
-                bit++;
-                yBits++;
-            }
-        }
-
-        return (maskX, maskY);
+        Append(ref y, microY);
+        Append(ref x, microX);
+        if (moreY > 0) { Append(ref y, 1); --moreY; }
+        if (moreX > 0) { Append(ref x, 1); --moreX; }
+        Append(ref y, moreY);
+        Append(ref x, moreX);
+        return (x, y);
     }
 
-    /// <summary>
-    /// 비트 디포짓: 값의 비트를 마스크의 set bit 위치에 분배.
-    /// </summary>
-    private static long Deposit(long value, long mask)
+    private static int[] DepositTable(long mask, int size)
     {
-        long result = 0;
-        int srcBit = 0;
-
-        for (int i = 0; i < 64 && mask != 0; i++)
+        var table = new int[size];
+        for (int value = 1; value < size; value++)
         {
-            if ((mask & 1) != 0)
-            {
-                if ((value & (1L << srcBit)) != 0)
-                    result |= 1L << i;
-                srcBit++;
-            }
-            mask >>= 1;
+            int deposited = 0;
+            long bits = mask;
+            for (int remaining = value; remaining != 0; remaining >>= 1, bits &= bits - 1)
+                if ((remaining & 1) != 0)
+                    deposited |= checked((int)(bits & -bits));
+            table[value] = deposited;
         }
-
-        return result;
+        return table;
     }
 
-    /// <summary>
-    /// 비트 추출: 마스크의 set bit 위치에서 값의 비트를 추출.
-    /// </summary>
-    private static long Extract(long value, long mask)
+    private static byte[] Transform(byte[] data, int width, int height, int bytesPerElement, bool encode)
     {
-        long result = 0;
-        int dstBit = 0;
+        if (width <= 0 || height <= 0 || bytesPerElement <= 0)
+            throw new ArgumentException("PS5 texture dimensions and bytes per element must be positive.");
+        int size = checked(width * height * bytesPerElement);
+        if (data.Length < size)
+            throw new ArgumentException($"PS5 texture needs at least {size} bytes; got {data.Length}.", nameof(data));
+        // Match Python: unsupported tile shapes are kept linear, and only mip0 is returned.
+        if (!SupportsDimensions(width, height, bytesPerElement))
+            return data.AsSpan(0, size).ToArray();
 
-        for (int i = 0; i < 64 && mask != 0; i++)
-        {
-            if ((mask & 1) != 0)
-            {
-                if ((value & (1L << i)) != 0)
-                    result |= 1L << dstBit;
-                dstBit++;
-            }
-            mask >>= 1;
-        }
-
-        return result;
-    }
-
-    /// <summary>
-    /// 비압축 텍스처를 언스위즐한다.
-    /// </summary>
-    public static byte[] UnswizzleUncompressed(
-        byte[] swizzled, int width, int height, int bytesPerElement)
-    {
+        var output = new byte[size];
         var (maskX, maskY) = ComputeSwizzleMasks(width, height, bytesPerElement);
-        int linearSize = width * height * bytesPerElement;
-        var output = new byte[linearSize];
-
+        var xTable = DepositTable(maskX, width);
+        var yTable = DepositTable(maskY, height);
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
             {
-                long swizzledOffset = Deposit(x * bytesPerElement, maskX) | Deposit(y, maskY);
-                int linearOffset = (y * width + x) * bytesPerElement;
-
-                if (swizzledOffset + bytesPerElement <= swizzled.Length &&
-                    linearOffset + bytesPerElement <= output.Length)
-                {
-                    Buffer.BlockCopy(swizzled, (int)swizzledOffset, output, linearOffset, bytesPerElement);
-                }
+                int linear = (y * width + x) * bytesPerElement;
+                int swizzled = (xTable[x] | yTable[y]) * bytesPerElement;
+                data.AsSpan(encode ? linear : swizzled, bytesPerElement)
+                    .CopyTo(output.AsSpan(encode ? swizzled : linear, bytesPerElement));
             }
         }
-
         return output;
     }
 
-    /// <summary>
-    /// 비압축 텍스처를 스위즐한다.
-    /// </summary>
-    public static byte[] SwizzleUncompressed(
-        byte[] linear, int width, int height, int bytesPerElement)
-    {
-        var (maskX, maskY) = ComputeSwizzleMasks(width, height, bytesPerElement);
-        int swizzledSize = linear.Length; // 패딩 고려 시 더 클 수 있음
-        var output = new byte[swizzledSize];
+    public static byte[] UnswizzleUncompressed(byte[] data, int width, int height, int bytesPerElement) =>
+        Transform(data, width, height, bytesPerElement, encode: false);
 
+    public static byte[] SwizzleUncompressed(byte[] data, int width, int height, int bytesPerElement) =>
+        Transform(data, width, height, bytesPerElement, encode: true);
+
+    /// <summary>Encode top-origin PNG alpha as the Python tool's rotated PS5 Alpha8 payload.</summary>
+    public static byte[] EncodeAlpha8Atlas(byte[] topOrigin, int width, int height)
+    {
+        CheckAlpha8Atlas(topOrigin, width, height);
+        var rotated = new byte[topOrigin.Length];
         for (int y = 0; y < height; y++)
-        {
             for (int x = 0; x < width; x++)
-            {
-                long swizzledOffset = Deposit(x * bytesPerElement, maskX) | Deposit(y, maskY);
-                int linearOffset = (y * width + x) * bytesPerElement;
-
-                if (linearOffset + bytesPerElement <= linear.Length &&
-                    swizzledOffset + bytesPerElement <= output.Length)
-                {
-                    Buffer.BlockCopy(linear, linearOffset, output, (int)swizzledOffset, bytesPerElement);
-                }
-            }
-        }
-
-        return output;
+                rotated[x * height + height - 1 - y] = topOrigin[y * width + x];
+        return SwizzleUncompressed(rotated, height, width, 1);
     }
 
-    /// <summary>
-    /// BC 압축 텍스처의 블록을 언스위즐한다.
-    /// BC 블록은 4x4 픽셀 단위로 처리.
-    /// </summary>
-    public static byte[] UnswizzleBcBlocks(
-        byte[] swizzled, int width, int height, int blockBytes)
+    /// <summary>Decode an explicitly marked PS5 Alpha8 atlas using its logical metadata size.</summary>
+    public static byte[] DecodeAlpha8Atlas(byte[] encoded, int width, int height)
     {
-        int blocksX = (width + 3) / 4;
-        int blocksY = (height + 3) / 4;
-        int totalBlocks = blocksX * blocksY;
-        var output = new byte[totalBlocks * blockBytes];
-
-        var (maskX, maskY) = ComputeSwizzleMasks(blocksX, blocksY, blockBytes);
-
-        for (int by = 0; by < blocksY; by++)
-        {
-            for (int bx = 0; bx < blocksX; bx++)
-            {
-                long swizzledOffset = Deposit(bx * blockBytes, maskX) | Deposit(by, maskY);
-                int linearOffset = (by * blocksX + bx) * blockBytes;
-
-                if (swizzledOffset + blockBytes <= swizzled.Length &&
-                    linearOffset + blockBytes <= output.Length)
-                {
-                    Buffer.BlockCopy(swizzled, (int)swizzledOffset, output, linearOffset, blockBytes);
-                }
-            }
-        }
-
-        return output;
+        CheckAlpha8Atlas(encoded, width, height);
+        var rotated = UnswizzleUncompressed(encoded, height, width, 1);
+        var linear = new byte[rotated.Length];
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                linear[y * width + x] = rotated[x * height + height - 1 - y];
+        return linear;
     }
 
-    /// <summary>
-    /// BC 압축 텍스처의 블록을 스위즐한다.
-    /// </summary>
-    public static byte[] SwizzleBcBlocks(
-        byte[] linear, int width, int height, int blockBytes)
+    private static void CheckAlpha8Atlas(byte[] data, int width, int height)
     {
-        int blocksX = (width + 3) / 4;
-        int blocksY = (height + 3) / 4;
-        int totalBlocks = blocksX * blocksY;
-        var output = new byte[linear.Length];
-
-        var (maskX, maskY) = ComputeSwizzleMasks(blocksX, blocksY, blockBytes);
-
-        for (int by = 0; by < blocksY; by++)
-        {
-            for (int bx = 0; bx < blocksX; bx++)
-            {
-                long swizzledOffset = Deposit(bx * blockBytes, maskX) | Deposit(by, maskY);
-                int linearOffset = (by * blocksX + bx) * blockBytes;
-
-                if (linearOffset + blockBytes <= linear.Length &&
-                    swizzledOffset + blockBytes <= output.Length)
-                {
-                    Buffer.BlockCopy(linear, linearOffset, output, (int)swizzledOffset, blockBytes);
-                }
-            }
-        }
-
-        return output;
+        if (!SupportsDimensions(width, height, 1) || !SupportsDimensions(height, width, 1))
+            throw new NotSupportedException("PS5 Alpha8 requires power-of-two dimensions supported in both orientations.");
+        if (data.Length != checked(width * height))
+            throw new ArgumentException("PS5 Alpha8 atlas requires exactly one unpadded mip level.", nameof(data));
     }
 
-    /// <summary>
-    /// 텍스처 포맷에 따라 적절한 언스위즐 메서드를 호출한다.
-    /// </summary>
-    public static byte[] Unswizzle(byte[] data, int width, int height, int textureFormat)
-    {
-        if (Ps5SwizzleConstants.IsBcFormat(textureFormat))
-        {
-            int blockBytes = Ps5SwizzleConstants.BcBlockBytes.GetValueOrDefault(textureFormat, 16);
-            return UnswizzleBcBlocks(data, width, height, blockBytes);
-        }
-        else
-        {
-            int bpe = Ps5SwizzleConstants.BytesPerElement(textureFormat);
-            return UnswizzleUncompressed(data, width, height, bpe);
-        }
-    }
+    // The Python branch has separate BC/decoding/layout inference. A generic tile permutation
+    // must not be presented as support for writing those layouts.
+    public static byte[] UnswizzleBcBlocks(byte[] data, int width, int height, int blockBytes) =>
+        throw new NotSupportedException("PS5 BC layout selection is not supported in AT.");
 
-    /// <summary>
-    /// 텍스처 포맷에 따라 적절한 스위즐 메서드를 호출한다.
-    /// </summary>
-    public static byte[] Swizzle(byte[] data, int width, int height, int textureFormat)
-    {
-        if (Ps5SwizzleConstants.IsBcFormat(textureFormat))
-        {
-            int blockBytes = Ps5SwizzleConstants.BcBlockBytes.GetValueOrDefault(textureFormat, 16);
-            return SwizzleBcBlocks(data, width, height, blockBytes);
-        }
-        else
-        {
-            int bpe = Ps5SwizzleConstants.BytesPerElement(textureFormat);
-            return SwizzleUncompressed(data, width, height, bpe);
-        }
-    }
+    public static byte[] SwizzleBcBlocks(byte[] data, int width, int height, int blockBytes) =>
+        throw new NotSupportedException("PS5 BC layout selection is not supported in AT.");
+
+    public static byte[] Unswizzle(byte[] data, int width, int height, int textureFormat) =>
+        UnswizzleUncompressed(data, width, height, Ps5SwizzleConstants.BytesPerElement(textureFormat));
+
+    public static byte[] Swizzle(byte[] data, int width, int height, int textureFormat) =>
+        SwizzleUncompressed(data, width, height, Ps5SwizzleConstants.BytesPerElement(textureFormat));
 }

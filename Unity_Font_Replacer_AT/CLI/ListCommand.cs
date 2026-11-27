@@ -6,7 +6,7 @@ namespace UnityFontReplacer.CLI;
 
 public static class ListCommand
 {
-    public static async Task ExecuteAsync(string? gamePath, string jsonFile, string? outputDir = null)
+    public static async Task ExecuteAsync(string? gamePath, string jsonFile, string? outputDir = null, bool freezeDynamic = false, bool keepOriginalFallback = false)
     {
         await Task.CompletedTask;
 
@@ -66,7 +66,7 @@ public static class ListCommand
 
         var replacer = new FontReplacer(ctx);
         replacer.BuildCabMappings(resolved.AssetFiles);
-        var replaced = replacer.ReplaceFromMapping(mapping, outputDir);
+        var replaced = replacer.ReplaceFromMapping(mapping, outputDir, freezeDynamic, keepOriginalFallback);
 
         AnsiConsole.MarkupLine($"[green]Replacement complete: {replaced} font(s) replaced[/]");
     }

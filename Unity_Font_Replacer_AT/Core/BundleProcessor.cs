@@ -36,7 +36,7 @@ public static class BundleProcessor
                 var manager = new AssetsManager();
                 try
                 {
-                    var saved = manager.LoadBundleFile(path);
+                    var saved = LoadBundle(manager, path);
                     var entries = saved.file.BlockAndDirInfo.DirectoryInfos;
                     if (!entries.Select(entry => entry.Name).SequenceEqual(dirInfos.Select(entry => entry.Name)))
                         throw new InvalidDataException("Saved bundle directory does not match the source.");
@@ -50,18 +50,26 @@ public static class BundleProcessor
             }, isInPlace ? () => CloseBundleReaders(bunInst) : null, transaction);
     }
 
+    internal static BundleFileInstance LoadBundle(AssetsManager manager, string path, bool unpackIfPacked = true) =>
+        UnityFsV9.Load(manager, path, unpackIfPacked);
+
+    // Kept until all callers use LoadBundle. It rejects versions newer than the
+    // v9 adapter rather than passing unknown formats to AssetsTools.NET.
     internal static void EnsureSupportedBundle(string path)
     {
         using var stream = File.OpenRead(path);
         Span<byte> prefix = stackalloc byte[12];
         int read = stream.ReadAtLeast(prefix, prefix.Length, throwOnEndOfStream: false);
         if (read == prefix.Length && prefix[..8].SequenceEqual("UnityFS\0"u8) &&
-            System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(prefix[8..]) >= 9)
-            throw new NotSupportedException("UnityFS v9 and newer are not supported for writing by AssetsTools.NET. Use the Python edition.");
+            System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(prefix[8..]) > 9)
+            throw new NotSupportedException("UnityFS versions newer than 9 are not supported.");
     }
 
     private static void WriteBundle(BundleFileInstance bunInst, string path, bool recompress)
     {
+        if (UnityFsV9.TryWrite(bunInst, path, recompress))
+            return;
+
         using var writer = new AssetsFileWriter(path);
 
         if (recompress)

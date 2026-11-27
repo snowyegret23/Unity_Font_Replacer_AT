@@ -99,7 +99,6 @@ public class FontScanner
         {
             if (IsBundleFile(filePath))
             {
-                BundleProcessor.EnsureSupportedBundle(filePath);
                 ScanBundle(manager, filePath, displayName, entries);
             }
             else
@@ -113,7 +112,7 @@ public class FontScanner
     private static void ScanBundle(AssetsManager am, string filePath, string displayName, List<FontEntry> entries)
     {
         // unpackIfPacked: false → LZ4는 스트리밍 읽기, 메모리에 전체를 풀지 않음
-        var bundle = am.LoadBundleFile(filePath, unpackIfPacked: false);
+        var bundle = BundleProcessor.LoadBundle(am, filePath, unpackIfPacked: false);
         var dirInfos = bundle.file.BlockAndDirInfo.DirectoryInfos;
 
         // 번들 내 모든 직렬화 파일을 먼저 로드 (MonoScript 크로스 참조 해석용)
@@ -170,6 +169,8 @@ public class FontScanner
                     name = bf["m_Name"].AsString;
                 }
 
+                if (name?.StartsWith("__UFR_", StringComparison.Ordinal) == true)
+                    continue;
                 entries.Add(new FontEntry
                 {
                     File = displayName,
@@ -207,7 +208,9 @@ public class FontScanner
             {
                 var className = scriptExt.baseField["m_ClassName"].AsString;
                 if (verbose) Console.Error.WriteLine($"  [DIAG]   -> className={className}");
-                if (className == "TMP_FontAsset")
+                var namespaceField = scriptExt.baseField["m_Namespace"];
+                var namespaceName = namespaceField.IsDummy ? "" : namespaceField.AsString;
+                if ((className, namespaceName) is ("TMP_FontAsset", "TMPro") or ("FontAsset", "UnityEngine.TextCore.Text"))
                     isTmp = true;
                 else
                     return;
@@ -243,15 +246,9 @@ public class FontScanner
             return;
         }
 
-        if (schemaInfo.GlyphCount <= 0)
+        if ((schemaInfo.GlyphCount <= 0 && !isTmp) || schemaInfo.AtlasPathId == 0)
         {
-            if (verbose) Console.Error.WriteLine("  [DIAG]   -> glyph count is 0, skipped");
-            return;
-        }
-
-        if (schemaInfo.AtlasFileId != 0 && schemaInfo.AtlasPathId == 0)
-        {
-            if (verbose) Console.Error.WriteLine("  [DIAG]   -> external atlas stub only, skipped");
+            if (verbose) Console.Error.WriteLine("  [DIAG]   -> no replaceable atlas, skipped");
             return;
         }
 
@@ -262,6 +259,8 @@ public class FontScanner
         string fontName = fullField["m_Name"].IsDummy
             ? $"TMP_{info.PathId}"
             : fullField["m_Name"].AsString;
+        if (fontName.StartsWith("__UFR_", StringComparison.Ordinal))
+            return;
 
         if (verbose)
         {

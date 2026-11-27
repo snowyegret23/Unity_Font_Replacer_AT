@@ -72,6 +72,115 @@ public static class TmpFontHandler
             SafeSetString(baseField, "m_Version", source.Version);
     }
 
+    /// <summary>
+    /// Convert a Dynamic/DynamicOS FontAsset to Static for a baked atlas. Call
+    /// before serializing any replacement fields. The default is fail-closed.
+    /// </summary>
+    public static bool PrepareStaticPopulation(AssetTypeValueField target, bool allowFreeze)
+    {
+        var mode = target["m_AtlasPopulationMode"];
+        var dynamicOs = target["InternalDynamicOS"];
+        bool dynamic = false;
+        if (!mode.IsDummy)
+            dynamic |= ReadInteger(mode) != 0;
+        if (!dynamicOs.IsDummy)
+        {
+            if (dynamicOs.Value?.ValueType == AssetValueType.Bool)
+                dynamic |= dynamicOs.AsBool;
+            else
+                dynamic |= ReadInteger(dynamicOs) != 0;
+        }
+        if (!dynamic)
+            return false;
+        if (!allowFreeze)
+            throw new InvalidDataException(
+                "Dynamic TMP FontAsset replacement requires explicit --freeze-dynamic because the replacement is a baked static atlas.");
+
+        var sourceFont = target["m_SourceFontFile"];
+        if (!sourceFont.IsDummy)
+        {
+            // Validate both fields before mutation to avoid leaving half a PPtr.
+            ReadInteger(sourceFont["m_FileID"]);
+            ReadInteger(sourceFont["m_PathID"]);
+        }
+
+        if (!mode.IsDummy)
+            SetIntegerZero(mode);
+        if (!dynamicOs.IsDummy)
+        {
+            if (dynamicOs.Value?.ValueType == AssetValueType.Bool)
+                dynamicOs.AsBool = false;
+            else
+                SetIntegerZero(dynamicOs);
+        }
+        if (!sourceFont.IsDummy)
+        {
+            SetIntegerZero(sourceFont["m_FileID"]);
+            SetIntegerZero(sourceFont["m_PathID"]);
+        }
+        return true;
+    }
+
+    private static long ReadInteger(AssetTypeValueField value)
+    {
+        try
+        {
+            return value.Value?.ValueType switch
+            {
+                AssetValueType.Int8 or AssetValueType.UInt8 or AssetValueType.Int16 or AssetValueType.UInt16 or
+                AssetValueType.Int32 or AssetValueType.UInt32 or AssetValueType.Int64 or AssetValueType.UInt64
+                    => value.AsLong,
+                _ => throw new InvalidDataException($"Expected a serialized TMP integer: {value.FieldName}."),
+            };
+        }
+        catch (OverflowException ex)
+        {
+            throw new InvalidDataException($"Invalid serialized TMP integer: {value.FieldName}.", ex);
+        }
+    }
+
+    private static void SetIntegerZero(AssetTypeValueField field)
+    {
+        switch (field.Value.ValueType)
+        {
+            case AssetValueType.Int8: field.AsSByte = 0; break;
+            case AssetValueType.UInt8: field.AsByte = 0; break;
+            case AssetValueType.Int16: field.AsShort = 0; break;
+            case AssetValueType.UInt16: field.AsUShort = 0; break;
+            case AssetValueType.Int32: field.AsInt = 0; break;
+            case AssetValueType.UInt32: field.AsUInt = 0; break;
+            case AssetValueType.Int64: field.AsLong = 0; break;
+            case AssetValueType.UInt64: field.AsULong = 0; break;
+        }
+    }
+
+    internal static IReadOnlyList<(int FileId, long PathId)> ReadAtlasReferences(AssetTypeValueField target)
+    {
+        var references = new List<(int FileId, long PathId)>();
+        var array = GetArrayField(target, "m_AtlasTextures");
+        if (array is not null)
+        {
+            foreach (var element in array.Children)
+                AddReference(element);
+        }
+        AddReference(target["m_AtlasTexture"]);
+        AddReference(target["atlas"]);
+        return references;
+
+        void AddReference(AssetTypeValueField reference)
+        {
+            if (reference.IsDummy)
+                return;
+            var fileId = reference["m_FileID"];
+            var pathId = reference["m_PathID"];
+            if (fileId.IsDummy && pathId.IsDummy)
+                return;
+            var key = (checked((int)ReadInteger(fileId)), ReadInteger(pathId));
+            if (key.Item2 != 0 && !references.Contains(key))
+                references.Add(key);
+        }
+    }
+
     private static bool HasNewSchemaFields(AssetTypeValueField bf)
     {
         return !bf["m_FaceInfo"].IsDummy ||
@@ -411,11 +520,14 @@ public static class TmpFontHandler
             first["m_PathID"].AsLong = pathId;
         }
 
-        var legacy = bf["atlas"];
-        if (!legacy.IsDummy)
+        foreach (var key in new[] { "m_AtlasTexture", "atlas" })
         {
-            legacy["m_FileID"].AsInt = fileId;
-            legacy["m_PathID"].AsLong = pathId;
+            var reference = bf[key];
+            if (!reference.IsDummy && !reference["m_FileID"].IsDummy && !reference["m_PathID"].IsDummy)
+            {
+                reference["m_FileID"].AsInt = fileId;
+                reference["m_PathID"].AsLong = pathId;
+            }
         }
     }
 
@@ -565,21 +677,8 @@ public static class TmpFontHandler
         }
     }
 
-    private static (int FileId, long PathId) ReadAtlasRef(AssetTypeValueField bf)
-    {
-        var array = GetArrayField(bf, "m_AtlasTextures");
-        if (array != null && array.Children.Count > 0)
-        {
-            var first = array[0];
-            return (first["m_FileID"].AsInt, first["m_PathID"].AsLong);
-        }
-
-        var legacy = bf["atlas"];
-        if (!legacy.IsDummy)
-            return (legacy["m_FileID"].AsInt, legacy["m_PathID"].AsLong);
-
-        return (0, 0);
-    }
+    private static (int FileId, long PathId) ReadAtlasRef(AssetTypeValueField bf) =>
+        ReadAtlasReferences(bf).FirstOrDefault();
 
     private static (int FileId, long PathId) ReadMaterialRef(AssetTypeValueField bf)
     {

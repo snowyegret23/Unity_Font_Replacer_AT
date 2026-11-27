@@ -37,6 +37,8 @@ public static class OneShotCommand
         oneShotCommand.Add(fontOption);
         oneShotCommand.Add(ps5Option);
         oneShotCommand.Add(outputOption);
+        var freezeOption = CommandLineOptions.OptionalOption<bool>("--freeze-dynamic", "Freeze dynamic TMP to a static atlas");
+        oneShotCommand.Add(freezeOption);
         oneShotCommand.Add(sdfOnlyOption);
         oneShotCommand.Add(ttfOnlyOption);
         oneShotCommand.Add(forceRasterOption);
@@ -60,7 +62,8 @@ public static class OneShotCommand
                 parseResult.GetValue(atlasSizeOption) ?? DefaultAtlasSize,
                 parseResult.GetValue(pointSizeOption),
                 parseResult.GetValue(charsetOption) ?? MakeSdfCommand.DefaultCharsetArgument,
-                parseResult.GetValue(filterModeOption) ?? DefaultFilterMode);
+                parseResult.GetValue(filterModeOption) ?? DefaultFilterMode,
+                parseResult.GetValue(freezeOption));
         });
 
         return oneShotCommand;
@@ -78,7 +81,7 @@ public static class OneShotCommand
         string atlasSize,
         int pointSize,
         string charset,
-        string filterMode)
+        string filterMode, bool freezeDynamic = false)
     {
         await Task.CompletedTask;
 
@@ -297,7 +300,7 @@ public static class OneShotCommand
             var replacer = new FontReplacer(ctx);
             replacer.BuildCabMappings(resolved.AssetFiles);
 
-            var replaced = replacer.ReplaceFromMapping(mapping, outputDir);
+            var replaced = replacer.ReplaceFromMapping(mapping, outputDir, freezeDynamic);
             AnsiConsole.MarkupLine($"[green]Oneshot complete: {replaced} font(s) replaced[/]");
         }
         finally

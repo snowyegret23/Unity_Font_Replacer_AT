@@ -66,8 +66,7 @@ public class AssetsContext : IDisposable
 
     public BundleFileInstance LoadBundleFile(string path)
     {
-        BundleProcessor.EnsureSupportedBundle(path);
-        return Manager.LoadBundleFile(path);
+        return BundleProcessor.LoadBundle(Manager, path);
     }
 
     public AssetsFileInstance LoadAssetsFileFromBundle(BundleFileInstance bundle, int index = 0)
@@ -101,7 +100,7 @@ public class AssetsContext : IDisposable
             {
                 if (FontScanner.IsBundleFile(ggmPath))
                 {
-                    var bundle = Manager.LoadBundleFile(ggmPath);
+                    var bundle = BundleProcessor.LoadBundle(Manager, ggmPath);
                     var dirInfos = bundle.file.BlockAndDirInfo.DirectoryInfos;
                     for (int i = 0; i < dirInfos.Count; i++)
                     {

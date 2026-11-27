@@ -30,12 +30,18 @@ public static class CommandBuilder
         listCommand.Add(listGamePathOption);
         listCommand.Add(listFileOption);
         listCommand.Add(listOutputOption);
+        var listFreezeOption = CommandLineOptions.OptionalOption<bool>("--freeze-dynamic", "Freeze dynamic TMP to a static atlas");
+        listCommand.Add(listFreezeOption);
+        var listFallbackOption = CommandLineOptions.OptionalOption<bool>("--keep-original-fallback", "Preserve a single supported standalone static TMP font as a fallback");
+        listCommand.Add(listFallbackOption);
         listCommand.SetAction(async parseResult =>
         {
             await ListCommand.ExecuteAsync(
                 parseResult.GetValue(listGamePathOption),
                 parseResult.GetRequiredValue(listFileOption),
-                parseResult.GetValue(listOutputOption));
+                parseResult.GetValue(listOutputOption),
+                parseResult.GetValue(listFreezeOption),
+                parseResult.GetValue(listFallbackOption));
         });
 
         // export subcommand
@@ -114,7 +120,7 @@ public static class CommandBuilder
 
             if (UnityFontReplacer.Core.FontScanner.IsBundleFile(filePath))
             {
-                var bundle = am.LoadBundleFile(filePath, unpackIfPacked: false);
+                var bundle = UnityFontReplacer.Core.BundleProcessor.LoadBundle(am, filePath, unpackIfPacked: false);
                 var dirs = bundle.file.BlockAndDirInfo.DirectoryInfos;
                 Console.WriteLine($"Bundle entries: {dirs.Count}");
 

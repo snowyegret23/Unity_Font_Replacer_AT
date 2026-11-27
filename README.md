@@ -11,7 +11,11 @@ Unity 게임의 TTF 폰트와 SDF 폰트를 스캔, 교체, 추출, 생성합니
 - Python판의 평면 JSON과 `fonts` 래퍼 형식을 모두 읽습니다. 교체 대상은 파일명, 내부 에셋명, Path ID, 타입을 함께 확인합니다. 네 값이 같은 에셋이 여러 폴더에 있으면 모두 교체합니다.
 - `list --output-only <경로>`로 원본 게임 데이터 밖에 저장할 수 있습니다. 임시 저장본을 다시 열어 바뀐 오브젝트의 해시를 확인한 후 설치하고, 교체 작업에서 예외가 나면 이번 작업에서 이미 설치한 파일을 복구합니다. 강제 종료나 전원 손실까지 보장하는 기능은 아닙니다.
 - `parse --max-workers <수>`는 실제로 최대 작업자 수를 제한하며, JSON 결과는 입력 파일 순서를 유지합니다.
-- UnityFS v9 및 PS5 스위즐은 Python판을 사용하세요. Python판의 원본 TMP 폴백 보존, 동적 TMP 고정, 공유 아틀라스 전체 사전 검사와 Addressables 카탈로그 보정도 아직 AT판에 없습니다.
+- UnityFS v9는 디스크에 임시 데이터를 쓰는 방식으로 읽고 저장하며, 출력 형식도 v9로 유지합니다. 지원하지 않는 암호화 플래그와 v10 이상은 거부합니다.
+- SDF 교체 전에 공유 아틀라스의 소유자를 확인합니다. Dynamic/DynamicOS 폰트는 `--freeze-dynamic`을 지정해야 정적 아틀라스로 바뀝니다. 텍스처 이름만으로 별도 아틀라스를 찾아 수정하지 않습니다.
+- 지원되는 로컬 Standalone Addressables의 압축 JSON 카탈로그를 번들과 함께 검증하고, 실패하면 함께 원복합니다. 배포용 원격 카탈로그, UnityWebRequest 방식, 다른 플랫폼 형식은 대상이 아닙니다.
+- `list --keep-original-fallback`은 단일 아틀라스가 파일 안에 들어 있는 지원되는 standalone 정적 TMP 하나의 원본을 폴백으로 보존합니다. 번들 안의 원본 복제, 동적 TTF 우선순위, 외부·스트리밍 의존성과 기존 폴백 체인은 여전히 Python판 범위입니다.
+- PS5는 `list` 매핑의 `"process_swizzle": true`로 명시한 단일 밉 Alpha8 아틀라스만 지원합니다. 입력 PNG는 선형 8비트 회색조/회색조+알파/RGBA이어야 합니다. 자동 감지와 BC 스위즐은 Python판을 사용하세요.
 
 소스 빌드와 릴리스 워크플로에는 .NET 10 SDK가 필요합니다. AssetsTools.NET은 업스트림 `3ef7117`을 사용합니다. 릴리스 Windows x64 실행 파일은 자체 포함 빌드이므로 별도의 .NET 런타임을 설치할 필요가 없습니다.
 
@@ -231,6 +235,8 @@ UnityFontReplacer_KO.exe list --gamepath "D:\Games\MyGame" --file "D:\Work\MyGam
 | `--gamepath`, `-g` | 게임 루트 또는 `_Data` / `Data` 폴더 경로 |
 | `--file <file>` | `parse`로 만든 JSON 경로 |
 | `--output-only <dir>` | 게임 데이터 밖에 수정본 저장 |
+| `--freeze-dynamic` | 동적 TMP를 정적 아틀라스로 전환 |
+| `--keep-original-fallback` | 지원되는 standalone 정적 TMP 하나를 원본 폴백으로 보존 |
 
 ### `Replace_to` 규칙
 

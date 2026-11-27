@@ -11,7 +11,11 @@ It scans, replaces, exports, and generates Unity TTF and SDF fonts.
 - Reads both flat Python mappings and the wrapped `fonts` format. Replacement matches the outer file name, inner asset name, Path ID, and type. Identical tuples in different directories are all replaced.
 - `list --output-only <dir>` writes outside the game data directory. Staged saves are reopened and modified object bytes are checked by hash before install. Earlier writes are restored if replacement raises an error. This is not crash- or power-loss recovery.
 - `parse --max-workers <n>` limits actual concurrent workers and preserves input order in the emitted mapping.
-- Use the Python edition for UnityFS v9 and PS5 swizzled atlases. Original TMP fallbacks, freezing dynamic TMP, whole-game shared-atlas preflight, and Addressables catalog updates are also not yet available in AT.
+- UnityFS v9 is read with a disk-backed adapter and written back as v9. Unsupported encryption flags and v10+ are rejected.
+- Before an SDF replacement, the tool checks shared atlas owners. Dynamic/DynamicOS fonts require `--freeze-dynamic` to replace them with a static atlas. We do not implicitly rewrite textures just because their names resemble an atlas.
+- Supported compact JSON catalogs for local Standalone Addressables are checked and updated in the same transaction as saved bundles. Remote, UnityWebRequest-based, and other platform catalogs are outside this scope.
+- `list --keep-original-fallback` can retain one supported standalone static TMP font with one inline atlas as a fallback. Original cloning inside bundles, dynamic TTF priority, external/streamed dependencies, and pre-existing fallback chains remain Python-only.
+- For PS5, `"process_swizzle": true` in a `list` mapping supports explicit single-mip Alpha8 atlas replacement. Provide a linear 8-bit grayscale, grayscale+alpha, or RGBA PNG. Use the Python edition for automatic detection and BC layouts.
 
 Source builds and the release workflow require the .NET 10 SDK. AssetsTools.NET is pinned to upstream `3ef7117`. The self-contained Windows x64 release does not require users to install a separate .NET runtime.
 
@@ -231,6 +235,8 @@ UnityFontReplacer_EN.exe list --gamepath "D:\Games\MyGame" --file "D:\Work\MyGam
 | `--gamepath`, `-g` | Game root or `_Data` / `Data` directory |
 | `--file <file>` | Path to the JSON created by `parse` |
 | `--output-only <dir>` | Write modified files outside the game data directory |
+| `--freeze-dynamic` | Convert dynamic TMP to a static atlas |
+| `--keep-original-fallback` | Preserve one supported standalone static TMP font as an original fallback |
 
 ### `Replace_to` rules
 

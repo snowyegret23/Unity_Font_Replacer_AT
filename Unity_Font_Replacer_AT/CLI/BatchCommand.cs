@@ -40,6 +40,8 @@ public static class BatchCommand
         batchCommand.Add(fontOption);
         batchCommand.Add(ps5Option);
         batchCommand.Add(outputOption);
+        var freezeOption = CommandLineOptions.OptionalOption<bool>("--freeze-dynamic", "Freeze dynamic TMP to a static atlas");
+        batchCommand.Add(freezeOption);
         batchCommand.Add(sdfOnlyOption);
         batchCommand.Add(ttfOnlyOption);
         batchCommand.Add(forceRasterOption);
@@ -53,7 +55,8 @@ public static class BatchCommand
                 parseResult.GetValue(outputOption),
                 parseResult.GetValue(sdfOnlyOption),
                 parseResult.GetValue(ttfOnlyOption),
-                parseResult.GetValue(forceRasterOption));
+                parseResult.GetValue(forceRasterOption),
+                parseResult.GetValue(freezeOption));
         });
 
         return batchCommand;
@@ -61,7 +64,7 @@ public static class BatchCommand
 
     public static async Task ExecuteAsync(
         string gamePath, string fontName, bool ps5Swizzle,
-        string? outputDir, bool sdfOnly, bool ttfOnly, bool forceRaster)
+        string? outputDir, bool sdfOnly, bool ttfOnly, bool forceRaster, bool freezeDynamic = false)
     {
         await Task.CompletedTask;
 
@@ -139,7 +142,7 @@ public static class BatchCommand
         replacer.BuildCabMappings(resolved.AssetFiles);
 
         // 4. 교체 실행
-        var replaced = replacer.ReplaceFromMapping(mapping, outputDir);
+        var replaced = replacer.ReplaceFromMapping(mapping, outputDir, freezeDynamic);
 
         AnsiConsole.MarkupLine($"[green]Batch complete: {replaced} font(s) replaced[/]");
     }
