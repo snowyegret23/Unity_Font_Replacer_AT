@@ -13,7 +13,7 @@ Unity 게임의 TTF 폰트와 SDF 폰트를 스캔, 교체, 추출, 생성합니
 - `parse --max-workers <수>`는 실제로 최대 작업자 수를 제한하며, JSON 결과는 입력 파일 순서를 유지합니다.
 - UnityFS v9 및 PS5 스위즐은 Python판을 사용하세요. Python판의 원본 TMP 폴백 보존, 동적 TMP 고정, 공유 아틀라스 전체 사전 검사와 Addressables 카탈로그 보정도 아직 AT판에 없습니다.
 
-AssetsTools.NET은 .NET 8 빌드로 검증한 업스트림 `dd4ba19`를 사용합니다. 그 다음 커밋 `3ef7117`은 텍스처 프로젝트에 .NET 10 타깃을 추가하므로 현재 .NET 8 SDK로는 빌드되지 않습니다.
+소스 빌드와 릴리스 워크플로에는 .NET 10 SDK가 필요합니다. AssetsTools.NET은 업스트림 `3ef7117`을 사용합니다. 릴리스 Windows x64 실행 파일은 자체 포함 빌드이므로 별도의 .NET 런타임을 설치할 필요가 없습니다.
 
 ## 한눈에 보기
 

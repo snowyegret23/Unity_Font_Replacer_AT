@@ -13,7 +13,7 @@ It scans, replaces, exports, and generates Unity TTF and SDF fonts.
 - `parse --max-workers <n>` limits actual concurrent workers and preserves input order in the emitted mapping.
 - Use the Python edition for UnityFS v9 and PS5 swizzled atlases. Original TMP fallbacks, freezing dynamic TMP, whole-game shared-atlas preflight, and Addressables catalog updates are also not yet available in AT.
 
-AssetsTools.NET is pinned to upstream `dd4ba19`, verified with the .NET 8 SDK. The next commit, `3ef7117`, adds a .NET 10 target to the texture project and does not build with the current .NET 8 SDK.
+Source builds and the release workflow require the .NET 10 SDK. AssetsTools.NET is pinned to upstream `3ef7117`. The self-contained Windows x64 release does not require users to install a separate .NET runtime.
 
 ## At a Glance
 
